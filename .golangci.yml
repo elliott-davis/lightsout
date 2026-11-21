@@ -1,0 +1,188 @@
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+  modules-download-mode: readonly
+
+linters:
+  default: standard
+  enable:
+    - asasalint
+    - asciicheck
+    - bidichk
+    - bodyclose
+    - canonicalheader
+    - containedctx
+    - contextcheck
+    - depguard
+    - dupword
+    - durationcheck
+    - errchkjson
+    - errname
+    - errorlint
+    - exhaustive
+    - exptostd
+    - fatcontext
+    - forbidigo
+    - forcetypeassert
+    - gocheckcompilerdirectives
+    - gochecknoinits
+    - gochecksumtype
+    - gocognit
+    - goconst
+    - gocritic
+    - goheader
+    - gomoddirectives
+    - goprintffuncname
+    - gosec
+    - iface
+    - intrange
+    - loggercheck
+    - makezero
+    - mirror
+    - misspell
+    - musttag
+    - nakedret
+    - nilerr
+    - nilnesserr
+    - nilnil
+    - noctx
+    - nolintlint
+    - nosprintfhostport
+    - perfsprint
+    - predeclared
+    - reassign
+    - recvcheck
+    - revive
+    - rowserrcheck
+    - sloglint
+    - spancheck
+    - sqlclosecheck
+    - testableexamples
+    - thelper
+    - tparallel
+    - unconvert
+    - unparam
+    - usestdlibvars
+    - usetesting
+    - wastedassign
+    - whitespace
+  settings:
+    errcheck:
+      check-type-assertions: true
+      check-blank: false
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment
+      settings:
+        shadow:
+          strict: false
+    gocognit:
+      min-complexity: 30
+    nakedret:
+      max-func-lines: 0
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+      allow-unused: false
+    exhaustive:
+      default-signifies-exhaustive: false
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - style
+        - performance
+      disabled-checks:
+        - hugeParam
+        - paramTypeCombine
+        - unnamedResult
+        - whyNoLint
+    sloglint:
+      no-mixed-args: true
+      static-msg: true
+      key-naming-case: snake
+      context: scope
+    forbidigo:
+      forbid:
+        - pattern: '^fmt\.Print(f|ln)?$'
+          msg: write to an injected io.Writer or use log/slog
+        - pattern: '^print(ln)?$'
+          msg: write to an injected io.Writer or use log/slog
+      analyze-types: true
+    goheader:
+      values:
+        regexp:
+          YEAR: '\d{4}'
+      template: |-
+        Copyright {{ YEAR }} The Lightsout Authors
+        SPDX-License-Identifier: Apache-2.0
+    depguard:
+      rules:
+        kagent-adapter:
+          list-mode: lax
+          files:
+            - $all
+            - '!**/internal/runtime/kagent/**'
+          deny:
+            - pkg: github.com/kagent-dev/kagent
+              desc: "RUN-8: only internal/runtime/kagent may depend on kagent types"
+        forge-adapter:
+          list-mode: lax
+          files:
+            - $all
+            - '!**/internal/forge/github/**'
+          deny:
+            - pkg: github.com/google/go-github
+              desc: forge access goes through the internal/forge interface; only internal/forge/github may import go-github
+        legacy:
+          list-mode: lax
+          files:
+            - $all
+          deny:
+            - pkg: io/ioutil
+              desc: use io and os
+            - pkg: github.com/pkg/errors
+              desc: use errors and fmt.Errorf with %w
+            - pkg: github.com/sirupsen/logrus
+              desc: use log/slog
+            - pkg: go.uber.org/zap
+              desc: use log/slog
+            - pkg: github.com/stretchr/testify
+              desc: use the standard testing package and github.com/google/go-cmp/cmp
+  exclusions:
+    generated: strict
+    presets:
+      - common-false-positives
+      - std-error-handling
+    rules:
+      - path: _test\.go
+        linters:
+          - gosec
+          - goconst
+          - forcetypeassert
+          - dupword
+      - path: cmd/
+        linters:
+          - forbidigo
+
+formatters:
+  enable:
+    - gofumpt
+    - goimports
+  settings:
+    gofumpt:
+      extra:
+        group-params: true
+        clothe-returns: true
+    goimports:
+      local-prefixes:
+        - github.com/elliott-davis/lightsout
+  exclusions:
+    generated: strict
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  uniq-by-line: false

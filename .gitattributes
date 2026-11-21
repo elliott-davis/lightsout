@@ -1,0 +1,4 @@
+* text=auto eol=lf
+
+# Mark generated paths so they collapse in review diffs:
+# api/gen/** linguist-generated=true

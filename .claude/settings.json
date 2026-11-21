@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(make:*)", "Bash(go build:*)", "Bash(go test:*)", "Bash(go vet:*)", "Bash(go list:*)",
+      "Bash(go doc:*)", "Bash(go tool:*)", "Bash(go mod tidy:*)", "Bash(go mod download:*)", "Bash(go mod why:*)", "Bash(go env:*)",
+      "Bash(golangci-lint:*)", "Bash(scripts/codex.sh:*)", "Bash(./scripts/codex.sh:*)",
+      "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git show:*)", "Bash(git branch:*)"
+    ],
+    "ask": [
+      "Edit(/.golangci.yml)", "Write(/.golangci.yml)",
+      "Edit(/.github/workflows/**)", "Write(/.github/workflows/**)",
+      "Edit(/.claude/settings.json)", "Write(/.claude/settings.json)",
+      "Edit(/.claude/hooks/**)", "Write(/.claude/hooks/**)",
+      "Bash(git push:*)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [{ "matcher": "Edit|Write|MultiEdit", "hooks": [{ "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/format-go.sh", "timeout": 60 }] }],
+    "Stop": [{ "hooks": [{ "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/stop-check.sh", "timeout": 300 }] }]
+  }
+}
