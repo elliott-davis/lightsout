@@ -76,7 +76,8 @@ lands. Design notes for larger items live in [docs/design/](design/).
 
 | WI | Work item | Requirement IDs | Depends on | Status |
 | --- | --- | --- | --- | --- |
-| WI-08 | Forge interface and in-memory fake | INTG-1 (interface) | WI-06 | todo |
+| WI-08 | Forge interface and in-memory fake | INTG-1 (interface) | WI-06 | done |
+| WI-08a | Forge fake: remaining denial tests and fidelity | SEC-2, SEC-3, SEC-11 | WI-08 | todo |
 | WI-09 | CODEOWNERS ownership resolution | CON-2 (ownership) | WI-08 | todo |
 | WI-10 | State store and event loop | NFR-5 (event paths), NFR-4 (durable store) | WI-05, WI-08 | todo |
 | WI-11 | Contract activation and protected policy path | CON-2, CON-6, CON-10 (review path) | WI-04, WI-06, WI-09, WI-10 | todo |
@@ -87,8 +88,23 @@ lands. Design notes for larger items live in [docs/design/](design/).
   queue groups; and branch push scoped to one identity. The fake is the test double for everything below.
   Includes a read-only `fs.FS` over a git tree at a commit, which is the only input `contract.Load` may be given in
   production. Adapters must `url.PathEscape` gate identity values (`workflowId`, `checkId`) when building API paths.
+- **WI-08a** WI-08 follow-up: forge fake gaps left after three fix rounds, found by the final verification.
+  - **TOCTOU denial tests.** The re-plan after `Deny` (push.go) has no deterministic denial test. Add these cases:
+    - Deny reassigns or revokes the change: ErrForbidden, ref unchanged.
+    - Deny pushes on the same pusher: the outer push gets ErrConflict.
+    - Deny re-bases to a different diff: ErrConflict.
+  - **Pin these with tests that kill mutants:**
+    - the RecordMerge member-index check, using stacked PRs;
+    - the RecordMerge no-op clause;
+    - mode-only diffs on workflow and denied paths;
+    - `WorkflowRepo` in supersession;
+    - deleting the ejected member's queue ref.
+  - **Fidelity of RecordMerge outside a group.** Refuse drafts, octopus merges and another group's candidate, or mark every PR whose head landed as merged.
+  - **Fidelity of AddCheckRun.** Reject a conclusion unless the status is completed, and reject an unknown head SHA.
+  - **Symlinked .github.** Refuse a symlink or gitlink at a proper prefix of a workflow or denied path (`.github`, `.github/actions`).
 - **WI-09** Parse CODEOWNERS (gitignore semantics) at a trusted revision and resolve each path's current owners.
   From WI-06: implement the owner roles of `authz.RoleSource` (`path-owner`, `code-owner`, `contract-owner`). Resolve by forge and stable ID, mapping the ID to its current login and team membership at execution time with no cache. Return true only when the principal owns every path in `Target.Paths`, and deny on any lookup error. Define how code-owner and contract-owner differ. Negative tests: a renamed login, a recycled login, and a team removal between decision and execution.
+  From WI-08: use IdentityReader live with no cache. Read CODEOWNERS only via TreeReader.Tree at a full SHA. A symlinked CODEOWNERS (ErrSymlink) denies. A revoked actor (ErrNotFound) denies.
 - **WI-10** PostgreSQL-backed state for issues, changes, features and trains; idempotent webhook ingestion with
   signature checks; one authorization path for issue events, checks, callbacks, API and admin actions (NFR-5).
   The PostgreSQL audit backend implements `audit.Backend` and serializes head selection and insert in the transaction
@@ -103,6 +119,7 @@ lands. Design notes for larger items live in [docs/design/](design/).
   - Act only through a compare-and-swap on `Grant.Target.Revision`.
   - Serialize the denial auditor's chain with the transactional one, or keep them on separate chains.
   - Rate-limit before `Authorize`, and never echo `DeniedError.Reason` back to the caller.
+  From WI-08: map GetComment/GetReview re-reads to Integrity at execution time. EditUnknown, edited and deleted all deny. Check that Comment.Repo/Issue match the subject. Key issues by NodeID. ErrIncomplete and RateLimitError mean block and retry, never a partial result.
 - **WI-11** Activation of a contract revision requires approval of that exact revision by a current owner,
   under the previously trusted ownership and gate rules. A product change can never supply the policy that
   authorizes it (CON-2). Protected paths (contracts, CI definitions, CODEOWNERS) fail a product PR, and a protected
@@ -113,6 +130,7 @@ lands. Design notes for larger items live in [docs/design/](design/).
   From WI-03: protected-path classification already exists (`PathPolicy.Protected`; contract files and `Baseline.Protected` are always Forbidden). Reuse it; don't build a second matcher. Bind activation to `Effective.Revision`.
 - **WI-12** `internal/forge/github`: go-github implementation of WI-08, GitHub App auth, issue types, Checks
   publishing and the merge queue. Contract tests run the same suite against the fake and against recorded fixtures.
+  From WI-08: implement forgetest.Harness over recorded fixtures. Tests: url.PathEscape of identity values; an invalid tree name means Tree errors; modes 120000/160000; Compare beyond 3000 files and truncated trees are recovered or give ErrIncomplete. JobExecution.Provenance is Complete only when every field, including reusable-workflow repo/commit, came from the API.
 
 ## Phase 3: Verify
 
@@ -129,6 +147,7 @@ lands. Design notes for larger items live in [docs/design/](design/).
   revision, job identity, merge-group SHA, actual execution and explicit success. Skipped, neutral, missing, stale,
   foreign and same-name results block. A new queue head invalidates earlier results.
   From WI-03: treat `Effective.Conflicts` as a block, bind results to `Effective.Revision`, and treat `Obligation.Owner == factory` as unwaivable.
+  From WI-08: evidence comes only from ListJobExecutions at the merge-group CandidateSHA. Block on: incomplete provenance, SupersededBy, a mismatched producer/workflow/commit/job key, Event != merge_group, or a non-success conclusion. A new candidate after an eject has no evidence.
 - **WI-14** A change outside writable paths fails unless it touches only read-only paths and a path owner approves (CON-7).
   A change that mixes writable and read-only paths fails.
   A product PR that touches a protected path fails (CON-6). Shape rules fail with their gate ID (INT-18). The soft
@@ -149,6 +168,7 @@ lands. Design notes for larger items live in [docs/design/](design/).
 - **WI-18** The control plane alone merges, through the queue (SEC-2). Secret and dependency scans are mandatory
   baseline gates (SEC-4). Every agent commit carries the contract's trailer (NFR-6). Issues and Checks show the stage
   and disposition (PIP-1).
+  From WI-08: BranchRules(default) must be Complete, require the merge queue, require the factory verdict by the factory App ID, and have no agent bypass actors. Empty rules mean a failing install. Read NFR-6 trailers from DiffReader.Commits. Add check output fields for PIP-1.
 
 ## Phase 4: Intake and holdouts
 
@@ -165,6 +185,7 @@ lands. Design notes for larger items live in [docs/design/](design/).
   issue types or `type:` labels (INT-3). No owner gate at intake (INT-8). Splits become sub-issues (INT-11). Refusal reasons
   cover no covering contract, forbidden paths needed and multi-repo work (INT-12).
   From WI-06: implement the ideator `RoleSource`. The ideator must be a verified human who is eligible under the intake policy. A bot-opened issue has no ideator until one is bound, a transfer needs a fresh binding, and any delegation is audited. Proposal revisions are 40- or 64-hex digests, unique per subject and new on every edit, including reverts. The `decide-split` Choice is the digest of the kept set. Store the rejection comment with the state change. Decide whether submitting an idea is itself an audited decision.
+  From WI-08: SetIssueType reports native or label; define precedence when a stray type: label exists. A transfer (TransferredFrom set) needs a fresh ideator binding. Splits use AddSubIssue/ListSubIssues.
 - **WI-20** Ideator approval of the exact scenario revision before any spec (INT-4). Spec and plan committed under a
   factory path keyed by switch or issue ID (INT-5). The plan is a dependency graph whose first PR adds the switch, off (INT-14).
   Only the spec writer replans, every replan is logged, and replans are capped (INT-15). An explicit complete state (INT-16).
@@ -220,6 +241,7 @@ lands. Design notes for larger items live in [docs/design/](design/).
 - **WI-30** agentgateway deny-by-default egress per role, with blocked calls logged (RUN-3). Credentials are injected at egress,
   and a secret scan of a running sandbox finds none (RUN-4). No agent token can merge or push to protected branches (SEC-2).
   Reviewers are read-only (SEC-3).
+  From WI-08: enforce PushPolicy on the real write path. Coder credentials never carry the `workflows` scope. Evaluate the deny paths over the diff from the trusted base, never over the listed paths, and require descent from that base. The trusted base must be the base branch head or reachable from it. Push-triggered workflows on `factory/*` with secrets need CI-side controls.
 - **WI-31** Bare-mode Claude Code and factory-supplied Codex config. A fixture checkout plants hooks, MCP config and
   settings, and the test asserts none of them load (SEC-9). Inner-loop results are never gate results (AGT-1). A recipe is
   accepted only after it reproduces a green CI result, with CI as the fallback (AGT-8).
