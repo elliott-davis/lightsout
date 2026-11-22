@@ -22,6 +22,12 @@ import (
 
 const rev40 = "a4ac7e7ccc7544f12d78ba75fd84289a903511f3"
 
+// manifestSHA and manifestLine are the case manifest pin (PIP-13) of the oracle fixtures.
+const (
+	manifestSHA  = "5f1c0e3a9b7d2c4e6a8b0d1f3e5a7c9b1d3f5e7a9c0b2d4f6e8a1c3e5b7d9f02"
+	manifestLine = "    caseManifest: {path: oracle/cases.yaml, sha256: " + manifestSHA + "}\n"
+)
+
 const head = "apiVersion: factory/v1alpha1\nkind: Contract\n"
 
 func newParser(t *testing.T) *Parser {
@@ -120,8 +126,9 @@ func TestParse_PRDExample(t *testing.T) { // CON-11
 				{Name: "lint", GateRef: withCheck("lint"), Mandatory: false},
 			},
 			DarkMergeOracle: &Oracle{
-				GateRef:     withCheck("checkout-contract"),
-				Observables: []Observable{ObservableResponses, ObservableReads, ObservableWrites, ObservableEvents, ObservableQueuedJobs},
+				GateRef:      withCheck("checkout-contract"),
+				CaseManifest: CaseManifest{Path: "ops/oracle/checkout-cases.yaml", SHA256: manifestSHA},
+				Observables:  []Observable{ObservableResponses, ObservableReads, ObservableWrites, ObservableEvents, ObservableQueuedJobs},
 			},
 		},
 		Agents:    Agents{Verify: []string{"security-reviewer"}},
@@ -170,7 +177,7 @@ func TestParse_RejectsUnknownFields(t *testing.T) { // CON-11, CON-4
 	t.Parallel()
 	p := newParser(t)
 	gate := "    - {name: b, producerId: 'github-app:1', workflowId: 1, workflowRevision: '" + rev40 + "', checkId: b, mandatory: true%s}\n"
-	oracle := "  darkMergeOracle: {producerId: 'github-app:1', workflowId: 1, workflowRevision: '" + rev40 + "', checkId: b, observables: [reads]%s}\n"
+	oracle := "  darkMergeOracle: {producerId: 'github-app:1', workflowId: 1, workflowRevision: '" + rev40 + "', checkId: b, observables: [reads], caseManifest: {path: m.yaml, sha256: " + manifestSHA + "}%s}\n"
 	tests := []struct {
 		name  string
 		doc   string
@@ -287,9 +294,33 @@ func TestParse_GateIdentityRequired(t *testing.T) { // CON-4
 func TestParse_OracleRules(t *testing.T) { // CON-4
 	t.Parallel()
 	p := newParser(t)
-	base := head + "gates:\n  darkMergeOracle:\n    producerId: 'github-app:1'\n    workflowId: 1\n    workflowRevision: '" + rev40 + "'\n    checkId: c\n"
+	base := head + "gates:\n  darkMergeOracle:\n    producerId: 'github-app:1'\n    workflowId: 1\n    workflowRevision: '" + rev40 + "'\n    checkId: c\n" + manifestLine
 	if ps := problemsOf(t, p, base); !hasProblem(ps, CodeSchema, "/gates/darkMergeOracle") {
 		t.Errorf("missing observables: %v", ps)
+	}
+	noManifest := strings.TrimSuffix(base, manifestLine) + "    observables: [reads]\n"
+	if ps := problemsOf(t, p, noManifest); !hasProblem(ps, CodeSchema, "/gates/darkMergeOracle") {
+		t.Errorf("missing caseManifest: %v", ps) // PIP-13
+	}
+	for name, m := range map[string]string{
+		"short sha":        "{path: m.yaml, sha256: abc}",
+		"uppercase sha":    "{path: m.yaml, sha256: " + strings.ToUpper(manifestSHA) + "}",
+		"sha with prefix":  "{path: m.yaml, sha256: 'sha256:" + manifestSHA + "'}",
+		"missing sha":      "{path: m.yaml}",
+		"missing path":     "{sha256: " + manifestSHA + "}",
+		"parent traversal": "{path: ../m.yaml, sha256: " + manifestSHA + "}",
+		"inner traversal":  "{path: a/../m.yaml, sha256: " + manifestSHA + "}",
+		"absolute path":    "{path: /m.yaml, sha256: " + manifestSHA + "}",
+		"trailing slash":   "{path: a/, sha256: " + manifestSHA + "}",
+		"extra field":      "{path: m.yaml, sha256: " + manifestSHA + ", mode: x}",
+	} {
+		text := strings.TrimSuffix(base, manifestLine) + "    observables: [reads]\n    caseManifest: " + m + "\n"
+		if ps := problemsOf(t, p, text); !hasProblem(ps, CodeSchema, "/gates/darkMergeOracle/caseManifest") &&
+			!hasProblem(ps, CodeSchema, "/gates/darkMergeOracle/caseManifest/path") &&
+			!hasProblem(ps, CodeSchema, "/gates/darkMergeOracle/caseManifest/sha256") &&
+			!hasProblem(ps, CodeUnknownField, "/gates/darkMergeOracle/caseManifest/mode") {
+			t.Errorf("%s: problems = %v, want a schema problem under caseManifest", name, ps) // PIP-13
+		}
 	}
 	if ps := problemsOf(t, p, base+"    observables: []\n"); !hasProblem(ps, CodeSchema, "/gates/darkMergeOracle/observables") {
 		t.Errorf("empty observables: %v", ps)

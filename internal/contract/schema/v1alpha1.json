@@ -63,13 +63,23 @@
           "description": "Existing trusted CI comparison used for dark merges (PIP-13). Always mandatory, so it has no mandatory field.",
           "type": "object",
           "additionalProperties": false,
-          "required": ["producerId", "workflowId", "workflowRevision", "checkId", "observables"],
+          "required": ["producerId", "workflowId", "workflowRevision", "checkId", "observables", "caseManifest"],
           "properties": {
             "name": { "$ref": "#/$defs/name" },
             "producerId": { "$ref": "#/$defs/producerId" },
             "workflowId": { "$ref": "#/$defs/workflowId" },
             "workflowRevision": { "$ref": "#/$defs/workflowRevision" },
             "checkId": { "$ref": "#/$defs/checkId" },
+            "caseManifest": {
+              "description": "The oracle's case manifest, pinned by digest (PIP-13). Only the digest is identity; path says where to read it.",
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["path", "sha256"],
+              "properties": {
+                "path": { "$ref": "#/$defs/repoPath" },
+                "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+              }
+            },
             "observables": {
               "description": "What the oracle compares between the old and new behavior.",
               "type": "array",
@@ -140,6 +150,14 @@
       "maxItems": 256,
       "uniqueItems": true,
       "items": { "$ref": "#/$defs/pattern" }
+    },
+    "repoPath": {
+      "description": "A repo-relative file path: printable ASCII without wildcards, no leading or trailing slash, no empty, . or .. segment.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^[A-Za-z0-9_@+=,%.-][A-Za-z0-9_@+=,%./ -]*$",
+      "not": { "$ref": "#/$defs/badPathShape" }
     },
     "name": {
       "description": "Display name for readers. Never used for identity.",

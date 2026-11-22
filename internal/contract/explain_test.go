@@ -29,6 +29,7 @@ const oracleYAML = `gates:
     workflowRevision: ` + rev40 + `
     checkId: checkout-contract
     observables: [writes, responses]
+    caseManifest: {path: oracle/cases.yaml, sha256: ` + manifestSHA + `}
 `
 
 // explainTree uses every field a contract has.
@@ -217,7 +218,7 @@ func TestWriteExplanation_HostileTextCannotForgeOutput(t *testing.T) { // CON-13
 				Sources: []string{hostile},
 			}},
 			UnionGates: []Obligation{{Gate: Gate{Name: quoteForge}, Owner: OwnerContract, Sources: []string{quoteForge}}},
-			Oracles:    []OracleObligation{{Oracle: Oracle{Name: hostile, Observables: []Observable{Observable(hostile)}}, Sources: []string{hostile}}},
+			Oracles:    []OracleObligation{{Oracle: Oracle{Name: hostile, CaseManifest: CaseManifest{Path: hostile, SHA256: hostile}, Observables: []Observable{Observable(hostile)}}, Sources: []string{hostile}}},
 			Reviewers:  []Requirement{{Role: hostile, Sources: []string{hostile}}},
 		},
 	}

@@ -338,7 +338,7 @@ func TestChangedDirs(t *testing.T) { // CON-13
 
 // goldenTrustDigest pins the canonical encoding of testBaseline and
 // testDefaults. A change to it is a change to every stored trusted digest.
-const goldenTrustDigest = "05b0b1b69fb763381f3322285dca02d244d294977ed034ef96b22a118251adc9"
+const goldenTrustDigest = "61b280e65fa1c36fd895c3b7aea6f4d26432b2c4b9f23826e98ee54380457e30"
 
 func TestTrustDigest(t *testing.T) { // CON-13
 	t.Parallel()

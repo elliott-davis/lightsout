@@ -91,9 +91,10 @@ func WriteExplanation(w io.Writer, e Explanation) error {
 		for j, ob := range o.Oracle.Observables {
 			obs[j] = string(ob)
 		}
-		line("oracle: name=%s producer=%s workflow=%s check=%s revision=%s observables=%s sources: %s",
+		line("oracle: name=%s producer=%s workflow=%s check=%s revision=%s manifest=%s sha256=%s observables=%s sources: %s",
 			quoted(o.Oracle.Name), quoted(o.Oracle.ProducerID), quoted(string(o.Oracle.WorkflowID)),
-			quoted(o.Oracle.CheckID), quoted(o.Oracle.WorkflowRevision), quotedList(obs), quotedList(o.Sources))
+			quoted(o.Oracle.CheckID), quoted(o.Oracle.WorkflowRevision), quoted(o.Oracle.CaseManifest.Path),
+			quoted(o.Oracle.CaseManifest.SHA256), quotedList(obs), quotedList(o.Sources))
 	}
 	for _, r := range pp.Reviewers {
 		line("reviewer: %s sources: %s", quoted(r.Role), quotedList(r.Sources))
@@ -125,13 +126,18 @@ type (
 		Sources          []string `json:"sources"`
 	}
 	jsonOracle struct {
-		Name             string   `json:"name"`
-		ProducerID       string   `json:"producerId"`
-		WorkflowID       string   `json:"workflowId"`
-		WorkflowRevision string   `json:"workflowRevision"`
-		CheckID          string   `json:"checkId"`
-		Observables      []string `json:"observables"`
-		Sources          []string `json:"sources"`
+		Name             string       `json:"name"`
+		ProducerID       string       `json:"producerId"`
+		WorkflowID       string       `json:"workflowId"`
+		WorkflowRevision string       `json:"workflowRevision"`
+		CheckID          string       `json:"checkId"`
+		CaseManifest     jsonManifest `json:"caseManifest"`
+		Observables      []string     `json:"observables"`
+		Sources          []string     `json:"sources"`
+	}
+	jsonManifest struct {
+		Path   string `json:"path"`
+		SHA256 string `json:"sha256"`
 	}
 	jsonReviewer struct {
 		Role    string   `json:"role"`
@@ -208,7 +214,8 @@ func (e Explanation) MarshalJSON() ([]byte, error) {
 		out.Oracles = append(out.Oracles, jsonOracle{
 			Name: o.Oracle.Name, ProducerID: o.Oracle.ProducerID, WorkflowID: string(o.Oracle.WorkflowID),
 			WorkflowRevision: o.Oracle.WorkflowRevision, CheckID: o.Oracle.CheckID,
-			Observables: obs, Sources: nonNil(o.Sources),
+			CaseManifest: jsonManifest{Path: o.Oracle.CaseManifest.Path, SHA256: o.Oracle.CaseManifest.SHA256},
+			Observables:  obs, Sources: nonNil(o.Sources),
 		})
 	}
 	for _, r := range pp.Reviewers {

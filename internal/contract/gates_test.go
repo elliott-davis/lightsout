@@ -57,7 +57,7 @@ func gatesPolicy(t *testing.T) *Policy {
 
 func oracleYAMLAt(check string) string {
 	return "  darkMergeOracle:\n    producerId: github-app:1\n    workflowId: 7\n    workflowRevision: " + rev40 +
-		"\n    checkId: " + check + "\n    observables: [writes]\n"
+		"\n    checkId: " + check + "\n    observables: [writes]\n" + manifestLine
 }
 
 func TestCheckGates_RegisteredPasses(t *testing.T) { // CON-4

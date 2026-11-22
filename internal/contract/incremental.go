@@ -184,7 +184,7 @@ func ChangedDirs(paths []string) []string {
 // validation rule changes (a new check, a changed message-independent
 // condition, a new problem code that rejects what was accepted), so that every
 // stored trust digest goes stale and the next change validates everything.
-const validatorVersion = 2
+const validatorVersion = 3
 
 // TrustDigest returns the hex SHA-256 of a canonical encoding of everything the
 // validity of an unchanged contract depends on besides its own bytes: every

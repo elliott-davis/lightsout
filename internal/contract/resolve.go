@@ -67,8 +67,8 @@ type Obligation struct {
 	Sources []string
 }
 
-// OracleObligation is a dark-merge oracle a change must satisfy. Observables is the sorted
-// union over declarations with the same identity and revision.
+// OracleObligation is a dark-merge oracle a change must satisfy, merged over declarations with the same identity,
+// revision, case manifest digest and declared observables. Observables is sorted.
 type OracleObligation struct {
 	Oracle  Oracle
 	Sources []string
@@ -466,17 +466,47 @@ func mergeObligations(in []Obligation) []Obligation {
 	return out
 }
 
+// oracleIdentity is an oracle's merge key: identity, pinned revision and the case manifest's digest. Two
+// declarations with the same gate but another manifest are different obligations, and conflict (PIP-13).
+type oracleIdentity struct {
+	key      GateKey
+	rev      string
+	manifest string
+	obs      string // the sorted declared observables, comma-joined
+}
+
+// observablesText is the sorted, deduplicated observables of o, comma-joined.
+func observablesText(o *Oracle) string {
+	obs := sortedObservables(o.Observables)
+	s := make([]string, len(obs))
+	for i, ob := range obs {
+		s[i] = string(ob)
+	}
+	return strings.Join(s, ",")
+}
+
+// oracleID includes the declared observables: with one manifest only one observable set can be valid (the manifest's
+// boundaries must equal it), so declarations that differ there cannot both pass and conflict instead of merging.
+func oracleID(o *Oracle) oracleIdentity {
+	return oracleIdentity{o.Key(), o.WorkflowRevision, o.CaseManifest.SHA256, observablesText(o)}
+}
+
+// oraclePin is the revision text of a darkMergeOracle [Conflict]: "<workflowRevision>@<manifest sha256>;<observables>".
+func oraclePin(o *Oracle) string {
+	return o.WorkflowRevision + "@" + o.CaseManifest.SHA256 + ";" + observablesText(o)
+}
+
 // mergeOracles merges oracles like [mergeObligations]. Oracles are always mandatory.
 func mergeOracles(in []OracleObligation) []OracleObligation {
 	in = slices.Clone(in)
 	slices.SortStableFunc(in, func(a, b OracleObligation) int {
 		return cmp.Or(compareSources(firstSource(a.Sources), firstSource(b.Sources)), strings.Compare(a.Oracle.Name, b.Oracle.Name))
 	})
-	idx := map[identity]int{}
+	idx := map[oracleIdentity]int{}
 	var out []OracleObligation
 	for i := range in {
 		o := in[i]
-		id := identity{o.Oracle.Key(), o.Oracle.WorkflowRevision}
+		id := oracleID(&o.Oracle)
 		i, ok := idx[id]
 		if !ok {
 			idx[id] = len(out)
@@ -486,11 +516,12 @@ func mergeOracles(in []OracleObligation) []OracleObligation {
 			continue
 		}
 		m := &out[i]
-		m.Oracle.Observables = sortedObservables(append(slices.Clone(m.Oracle.Observables), o.Oracle.Observables...))
 		m.Sources = sortSources(append(m.Sources, o.Sources...))
 	}
 	slices.SortFunc(out, func(a, b OracleObligation) int {
-		return cmp.Or(compareKeys(a.Oracle.Key(), b.Oracle.Key()), strings.Compare(a.Oracle.WorkflowRevision, b.Oracle.WorkflowRevision))
+		return cmp.Or(compareKeys(a.Oracle.Key(), b.Oracle.Key()), strings.Compare(a.Oracle.WorkflowRevision, b.Oracle.WorkflowRevision),
+			strings.Compare(a.Oracle.CaseManifest.SHA256, b.Oracle.CaseManifest.SHA256),
+			strings.Compare(observablesText(&a.Oracle), observablesText(&b.Oracle)))
 	})
 	return out
 }
@@ -524,7 +555,8 @@ type pin struct {
 	sources []string
 }
 
-// conflicts finds identities pinned at more than one revision in the same change.
+// conflicts finds identities pinned at more than one revision in the same change. For darkMergeOracle the pin is
+// "revision@manifest-sha256", so a different case manifest conflicts like a different revision.
 func conflicts(eff *Effective) []Conflict {
 	var verify, union, oracles []pin
 	for i := range eff.VerifyGates {
@@ -537,7 +569,7 @@ func conflicts(eff *Effective) []Conflict {
 	}
 	for i := range eff.Oracles {
 		o := &eff.Oracles[i]
-		oracles = append(oracles, pin{o.Oracle.Key(), o.Oracle.WorkflowRevision, o.Sources})
+		oracles = append(oracles, pin{o.Oracle.Key(), oraclePin(&o.Oracle), o.Sources})
 	}
 	var out []Conflict
 	out = append(out, stageConflicts("verify", verify)...)

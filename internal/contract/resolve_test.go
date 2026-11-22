@@ -129,21 +129,22 @@ func TestResolve_CrossStackPinConflict(t *testing.T) { // CON-3
 
 func TestResolve_OracleMerging(t *testing.T) { // CON-3
 	t.Parallel()
-	oracle := func(rev, obs string) string {
+	oracleWith := func(rev, obs, sha string) string {
 		return "gates:\n  darkMergeOracle:\n    producerId: github-app:1\n    workflowId: 7\n    workflowRevision: " + rev +
-			"\n    checkId: oracle\n    observables: [" + obs + "]\n"
+			"\n    checkId: oracle\n    observables: [" + obs + "]\n    caseManifest: {path: oracle/cases.yaml, sha256: " + sha + "}\n"
 	}
+	oracle := func(rev, obs string) string { return oracleWith(rev, obs, manifestSHA) }
 	p := mustCompile(t,
 		tc{"", writableAll},
 		tc{"a", oracle(rev40, "writes, reads")},
-		tc{"a/deep", oracle(rev40, "events")},
+		tc{"a/deep", oracle(rev40, "reads, writes")},
 		tc{"b", oracle(revB, "reads")},
 	)
 	eff, err := p.Resolve([]string{"a/deep/x"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(eff.Oracles) != 1 || !slices.Equal(eff.Oracles[0].Oracle.Observables, []Observable{ObservableEvents, ObservableReads, ObservableWrites}) ||
+	if len(eff.Oracles) != 1 || !slices.Equal(eff.Oracles[0].Oracle.Observables, []Observable{ObservableReads, ObservableWrites}) ||
 		!slices.Equal(eff.Oracles[0].Sources, []string{"a/.factory.yaml", "a/deep/.factory.yaml"}) {
 		t.Errorf("Oracles = %+v, want one merged oracle", eff.Oracles)
 	}
@@ -154,11 +155,75 @@ func TestResolve_OracleMerging(t *testing.T) { // CON-3
 	if len(eff.Conflicts) != 1 || eff.Conflicts[0].Stage != "darkMergeOracle" {
 		t.Errorf("Conflicts = %+v, want one oracle conflict", eff.Conflicts)
 	}
+	// Declaring other observables for the same pin conflicts: one manifest can only match one observable set.
+	_, err = compileSet(t, tc{"", writableAll + oracle(rev40, "reads")}, tc{"svc", oracle(rev40, "reads, events")})
+	if ps := problemsFrom(t, err); !hasProblem(ps, CodeConflict, "/gates/darkMergeOracle") {
+		t.Errorf("different observables: problems = %v, want conflict", ps)
+	}
+	sib := mustCompile(t, tc{"", writableAll}, tc{"a", oracle(rev40, "reads")}, tc{"b", oracle(rev40, "events")})
+	eff, err = sib.Resolve([]string{"a/x", "b/x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(eff.Conflicts) != 1 || eff.Conflicts[0].Stage != "darkMergeOracle" || len(eff.Oracles) != 2 {
+		t.Errorf("sibling oracles with other observables: Conflicts = %+v, Oracles = %d, want a conflict", eff.Conflicts, len(eff.Oracles))
+	}
+	// The order does not depend on source or path order: observables break the tie (events before reads).
+	for _, paths := range [][]string{{"a/x", "b/x"}, {"b/x", "a/x"}} {
+		got, rerr := sib.Resolve(paths)
+		if rerr != nil {
+			t.Fatal(rerr)
+		}
+		if len(got.Oracles) != 2 || got.Oracles[0].Oracle.Observables[0] != ObservableEvents || got.Oracles[1].Oracle.Observables[0] != ObservableReads {
+			t.Errorf("paths %v: Oracles = %+v, want events before reads", paths, got.Oracles)
+		}
+	}
 	// Re-pinning an ancestor's oracle at another revision is rejected.
 	_, err = compileSet(t, tc{"", writableAll + oracle(rev40, "reads")}, tc{"svc", oracle(revB, "reads")})
 	if ps := problemsFrom(t, err); !hasProblem(ps, CodeConflict, "/gates/darkMergeOracle") {
 		t.Errorf("problems = %v, want conflict", ps)
 	}
+}
+
+// A different case manifest digest is a different pin, so sibling contracts that differ only there conflict in
+// either path order, and identical pins merge (PIP-13).
+func TestResolve_OracleManifestPin(t *testing.T) { // PIP-13
+	t.Parallel()
+	otherSHA := strings.Repeat("c", 64)
+	p := mustCompile(t,
+		tc{"", writableAll},
+		tc{"a", oracleDecl(otherSHA)}, // sorts after b's digest, so source order is not digest order
+		tc{"b", oracleDecl(manifestSHA)},
+		tc{"c", oracleDecl(otherSHA)},
+	)
+	for _, paths := range [][]string{{"a/x", "b/x"}, {"b/x", "a/x"}} {
+		eff, err := p.Resolve(paths)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(eff.Conflicts) != 1 || eff.Conflicts[0].Stage != "darkMergeOracle" ||
+			!slices.Equal(eff.Conflicts[0].Revisions, []string{rev40 + "@" + manifestSHA + ";reads", rev40 + "@" + otherSHA + ";reads"}) ||
+			len(eff.Oracles) != 2 || eff.Oracles[0].Oracle.CaseManifest.SHA256 != manifestSHA || eff.Oracles[1].Oracle.CaseManifest.SHA256 != otherSHA {
+			t.Errorf("paths %v: Conflicts = %+v, Oracles = %+v, want one oracle conflict on the manifest pin, oracles in digest order", paths, eff.Conflicts, eff.Oracles)
+		}
+	}
+	eff, err := p.Resolve([]string{"a/x", "c/x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(eff.Conflicts) != 0 || len(eff.Oracles) != 1 || len(eff.Oracles[0].Sources) != 2 {
+		t.Errorf("identical pins: Conflicts = %+v, Oracles = %+v, want one merged oracle", eff.Conflicts, eff.Oracles)
+	}
+	// Re-pinning an ancestor's oracle with another manifest is rejected.
+	_, err = compileSet(t, tc{"", writableAll + oracleDecl(manifestSHA)}, tc{"svc", oracleDecl(otherSHA)})
+	if ps := problemsFrom(t, err); !hasProblem(ps, CodeConflict, "/gates/darkMergeOracle") {
+		t.Errorf("problems = %v, want conflict", ps)
+	}
+}
+
+func oracleDecl(sha string) string {
+	return "gates:\n  darkMergeOracle:\n    producerId: github-app:1\n    workflowId: 7\n    workflowRevision: " + rev40 +
+		"\n    checkId: oracle\n    observables: [reads]\n    caseManifest: {path: oracle/cases.yaml, sha256: " + sha + "}\n"
 }
 
 func TestOverrides_LowestLevelWins(t *testing.T) { // CON-9

@@ -425,7 +425,7 @@ func TestPolicy_DoesNotAliasSetContracts(t *testing.T) { // CON-5, CON-12
 		"overrides:\n  reviewBudgetLines: 50\n  switchStaleDays: 5\n  switchAbandonedDays: 6\n" +
 		"gates:\n  verify:\n" + gateItem("a", rev40, true) +
 		"  union:\n" + gateItem("u", rev40, true) +
-		"  darkMergeOracle:\n    producerId: github-app:1\n    workflowId: 7\n    workflowRevision: " + rev40 + "\n    checkId: o\n    observables: [reads, writes]\n" +
+		"  darkMergeOracle:\n    producerId: github-app:1\n    workflowId: 7\n    workflowRevision: " + rev40 + "\n    checkId: o\n    observables: [reads, writes]\n" + manifestLine +
 		"agents:\n  verify: [payments-specialist]\n"
 	parser := newParser(t)
 	c, err := parser.Parse("", []byte(head+yaml))
@@ -508,7 +508,7 @@ func TestCompile_RejectsHandBuiltContractsInFull(t *testing.T) { // CON-4, CON-1
 		return &Contract{Gates: Gates{Verify: []Gate{g}}}
 	}
 	oracle := func(mod func(*Oracle)) *Contract {
-		o := Oracle{GateRef: baselineGate("o").GateRef, Observables: []Observable{ObservableReads}}
+		o := Oracle{GateRef: baselineGate("o").GateRef, Observables: []Observable{ObservableReads}, CaseManifest: CaseManifest{Path: "m.yaml", SHA256: manifestSHA}}
 		mod(&o)
 		return &Contract{Gates: Gates{DarkMergeOracle: &o}}
 	}
@@ -525,6 +525,11 @@ func TestCompile_RejectsHandBuiltContractsInFull(t *testing.T) { // CON-4, CON-1
 		{"forged log line in a gate name", gate(func(g *Gate) { g.Name = "x\n::error forged" })},
 		{"unknown observable", oracle(func(o *Oracle) { o.Observables = []Observable{"anything"} })},
 		{"no observables", oracle(func(o *Oracle) { o.Observables = nil })},
+		{"empty case manifest", oracle(func(o *Oracle) { o.CaseManifest = CaseManifest{} })},
+		{"case manifest without a digest", oracle(func(o *Oracle) { o.CaseManifest.SHA256 = "" })},
+		{"case manifest with an uppercase digest", oracle(func(o *Oracle) { o.CaseManifest.SHA256 = strings.ToUpper(manifestSHA) })},
+		{"case manifest path with ..", oracle(func(o *Oracle) { o.CaseManifest.Path = "../m.yaml" })},
+		{"case manifest path with a newline", oracle(func(o *Oracle) { o.CaseManifest.Path = "m.yaml\n::error x" })},
 		{"negative review budget", &Contract{Overrides: Overrides{ReviewBudgetLines: intp(-1)}}},
 		{"zero stale days", &Contract{Overrides: Overrides{SwitchStaleDays: intp(0)}}},
 		{"agent with a bad name", &Contract{Agents: Agents{Verify: []string{"Bad Name"}}}},
@@ -712,7 +717,7 @@ func TestRules_AccumulateFieldsCannotBeCleared(t *testing.T) { // CON-12
 	t.Parallel()
 	const svcFile = "svc/.factory.yaml"
 	gate := gateItem("g", rev40, true)
-	oracle := "gates:\n  darkMergeOracle:\n    producerId: github-app:1\n    workflowId: 7\n    workflowRevision: " + rev40 + "\n    checkId: o\n    observables: [reads]\n"
+	oracle := "gates:\n  darkMergeOracle:\n    producerId: github-app:1\n    workflowId: 7\n    workflowRevision: " + rev40 + "\n    checkId: o\n    observables: [reads]\n" + manifestLine
 	tests := map[string]struct {
 		parent, child string
 		holds         func(PathPolicy) bool

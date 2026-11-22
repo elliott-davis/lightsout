@@ -112,6 +112,10 @@
       "workflowId": "9",
       "workflowRevision": "a4ac7e7ccc7544f12d78ba75fd84289a903511f3",
       "checkId": "checkout-contract",
+      "caseManifest": {
+        "path": "oracle/cases.yaml",
+        "sha256": "5f1c0e3a9b7d2c4e6a8b0d1f3e5a7c9b1d3f5e7a9c0b2d4f6e8a1c3e5b7d9f02"
+      },
       "observables": [
         "responses",
         "writes"

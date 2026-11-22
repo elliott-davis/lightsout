@@ -595,16 +595,16 @@ func (v *validation) checkLightsOn(a *level) {
 	}
 }
 
-// checkOracles: an oracle with the same identity as an ancestor's must keep the revision.
+// checkOracles: an oracle with the same identity as an ancestor's must keep the revision and case manifest.
 func (v *validation) checkOracles(anc []*level) {
 	o := v.l.oracle
 	if o == nil {
 		return
 	}
 	for _, a := range anc {
-		if a.oracle != nil && a.oracle.Key() == o.Key() && a.oracle.WorkflowRevision != o.WorkflowRevision {
+		if a.oracle != nil && a.oracle.Key() == o.Key() && oraclePin(a.oracle) != oraclePin(o) {
 			v.addf(CodeConflict, []string{fieldGates, "darkMergeOracle"},
-				"oracle %s is pinned to a different revision than in %s; two pins on one path can never both pass",
+				"oracle %s is pinned to a different revision or case manifest than in %s; two pins on one path can never both pass",
 				quote(o.CheckID), quote(a.file))
 		}
 	}

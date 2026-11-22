@@ -92,7 +92,7 @@ func TestFieldRules_EveryRuleFieldParses(t *testing.T) { // CON-12
 		"/paths/generated":           {"paths:\n  generated: ['a']\n", func(c *Contract) bool { return c.Paths.Generated != nil && len(*c.Paths.Generated) > 0 }},
 		"/gates/verify":              {gate, func(c *Contract) bool { return len(c.Gates.Verify) > 0 }},
 		"/gates/union":               {strings.Replace(gate, "verify", "union", 1), func(c *Contract) bool { return len(c.Gates.Union) > 0 }},
-		"/gates/darkMergeOracle":     {"gates:\n  darkMergeOracle:\n    producerId: github-app:1\n    workflowId: 7\n    workflowRevision: " + rev40 + "\n    checkId: o\n    observables: [reads]\n", func(c *Contract) bool { return c.Gates.DarkMergeOracle != nil }},
+		"/gates/darkMergeOracle":     {"gates:\n  darkMergeOracle:\n    producerId: github-app:1\n    workflowId: 7\n    workflowRevision: " + rev40 + "\n    checkId: o\n    observables: [reads]\n" + manifestLine, func(c *Contract) bool { return c.Gates.DarkMergeOracle != nil }},
 		"/agents/verify":             {"agents:\n  verify: [payments-specialist]\n", func(c *Contract) bool { return len(c.Agents.Verify) > 0 }},
 		"/lightsOn":                  {"lightsOn: true\n", func(c *Contract) bool { return c.LightsOn != nil }},
 		"/overrides/switchStaleDays": {"overrides:\n  switchStaleDays: 3\n", func(c *Contract) bool { return c.Overrides.SwitchStaleDays != nil && *c.Overrides.SwitchStaleDays == 3 }},

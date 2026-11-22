@@ -73,6 +73,7 @@ gates:
   darkMergeOracle:               # always mandatory; no `mandatory` field, `name` optional
     producerId/workflowId/workflowRevision/checkId: ...
     observables: [responses, reads, writes, events, queued-jobs]
+    caseManifest: {path: ..., sha256: ...}   # the case manifest, pinned by digest (PIP-13)
 agents:
   verify: [security-reviewer]
 lightsOn: false
@@ -103,6 +104,7 @@ no rule or a rule names a property that doesn't exist.
 | `paths.forbidden`, `paths.readOnly`, `paths.sensitive` | safety, accumulate | Union down the tree. |
 | `paths.writable` | safety, narrow | A path is writable only if it matches the writable list at every level that declares one. |
 | `gates.verify`, `gates.union`, `gates.darkMergeOracle` | safety, accumulate | Union of obligations. A redeclared identity on the same stack must keep the same revision (two pins on one stack can never both pass) and may only raise `mandatory`. |
+| `gates.darkMergeOracle` (also) | safety, accumulate | A redeclared oracle identity must also keep the same `caseManifest` digest and the same `observables`, which must equal the manifest's boundary categories; they don't accumulate (PIP-13). A level that wants more coverage tightens by declaring another oracle, which accumulates. |
 | `agents.verify` | safety, accumulate | Union, always including the factory's core reviewers (`pr-reviewer`, `security-reviewer`). |
 | `lightsOn` | safety, only on | OR down the tree. An explicit `false` under an ancestor's `true` is an error. |
 | `overrides.*`, `paths.generated` | override | The lowest level that sets it wins, else the install default (CON-9). |

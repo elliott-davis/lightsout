@@ -91,6 +91,17 @@ type Oracle struct {
 	Name string `json:"name,omitempty"`
 	GateRef
 	Observables []Observable `json:"observables"`
+	// CaseManifest pins the case manifest (PIP-13): the case IDs, fixture digests, boundaries and covered paths
+	// the oracle must observe. Only the digest is identity.
+	CaseManifest CaseManifest `json:"caseManifest"`
+}
+
+// CaseManifest pins the oracle's case manifest by digest. Path says where to read it, relative to the repo root.
+// SHA256 is the lowercase hex SHA-256 of the file's bytes and is the only identity: changing the cases changes the
+// digest, so it is a contract change that goes through activation.
+type CaseManifest struct {
+	Path   string `json:"path"`
+	SHA256 string `json:"sha256"`
 }
 
 // Observable is something the dark-merge oracle compares.

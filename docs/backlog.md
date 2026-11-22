@@ -150,8 +150,10 @@ lands. Design notes for larger items live in [docs/design/](design/).
   From WI-04: validate a contract proposal with ValidateChanged plus the registry in one call, bound to the proposal revision. Derive changedDirs from the forge diff between the trusted and proposal revisions, never from the PR text: added, edited, deleted and renamed contracts, both sides of a rename. Pass dirs, not file paths. Misnamed, case-variant and symlinked contract files block. Assert the diff covers every contract file that differs. Store Scope.Checked and the registry answers with the activation decision for audit. derive Changed by comparing each contract file's digest against the trusted set, not only from the forge file list, which can be truncated. Include the old path of every rename. Always run a full Compile (about 2 s worst case) before activating anything. Incremental validation is for PR feedback only (WI-04a).
   From WI-09: build the owner RoleSource from codeowners.Load at the previously trusted base SHA, never the proposal head. Take that SHA from the protected default ref, never from the PR payload's base (GitHub serves fork commits by SHA). A Load error (ParseError, ErrSymlink, ErrTooLarge, ErrIncomplete) denies; never fall back. Record File.Revision() and File.Path() in the activation audit. RoleContractOwner checks the contract file paths being activated, which matches what GitHub's own code-owner review enforces (authz.md). Use one Target per owner area. Tests: a proposal that edits or adds .github/CODEOWNERS to make the approver an owner is denied; a repo A RoleSource never authorizes in repo B.
   From WI-07: activating a new install revision runs a full Compile plus CheckGates across every managed repo and reports failures without deactivating anything. Bind contract activation evidence to Effective.Revision plus Effective.InstallRevision.
+  From WI-16: call `oracle.ValidateManifest` on every `darkMergeOracle.caseManifest` at activation, reading the file at the proposal revision and checking its SHA-256 against the pin. An oversized case matrix (over 4096 observations) or a boundary set that differs from the declared observables fails activation before CI runs.
 - **WI-12** `internal/forge/github`: go-github implementation of WI-08, GitHub App auth, issue types, Checks
   publishing and the merge queue. Contract tests run the same suite against the fake and against recorded fixtures.
+  From WI-16: register the oracle harness's Ed25519 public key at install, scoped to one repo and one oracle (`oracle.HarnessKey`), and expose it as `oracle.Input.HarnessKeys`; call `oracle.ValidHarnessKey` at registration to refuse small-order keys; the harness private key must never enter either sandbox or any step of the oracle job that runs candidate code. The harness uploads `lightsout-oracle-report` and `lightsout-oracle-report.sig` (`oracle.SignReport`).
   From WI-08: implement forgetest.Harness over recorded fixtures. Tests: url.PathEscape of identity values; an invalid tree name means Tree errors; modes 120000/160000; Compare beyond 3000 files and truncated trees are recovered or give ErrIncomplete. JobExecution.Provenance is Complete only when every field, including reusable-workflow repo/commit, came from the API.
   From WI-09: verify CODEOWNERS wildcard-last-segment descent (`*.js` vs `lib.js/x.ts`), inline `# comment` among owners, and unknown-owner lines against recorded GitHub behavior. IsTeamMember maps GitHub's `state: pending` to false (active membership only).
   From WI-13:
@@ -170,7 +172,9 @@ lands. Design notes for larger items live in [docs/design/](design/).
 | WI-14 | Path, protected-path and PR shape gates | CON-7, CON-6, INT-18, INT-19 | WI-11 | todo |
 | WI-15 | Review policy and evidence rule | AGT-3, AGT-4, AGT-5, SEC-5, AGD-3, CON-8, INT-20 | WI-03, WI-06 | done |
 | WI-15a | Review evidence: dismissals and cross-claim confirmations ([#7](https://github.com/elliott-davis/lightsout/issues/7)) | AGT-4, SEC-11 | WI-15 | todo |
-| WI-16 | Dark-merge oracle evaluation | PIP-13, PIP-4, INT-10 (comparison) | WI-13 | todo |
+| WI-16 | Dark-merge oracle evaluation | PIP-13, PIP-4, INT-10 (comparison) | WI-13 | done |
+| WI-16a | Oracle: exercise the call-site fallback on first introduction ([#14](https://github.com/elliott-davis/lightsout/issues/14)) | PIP-13 | WI-16 | todo |
+| WI-16b | Oracle: contract-pinned allowed nondeterminism ([#15](https://github.com/elliott-davis/lightsout/issues/15)) | PIP-13 | WI-16 | todo |
 | WI-17 | Non-switchable changes | PIP-9 | WI-14, WI-15 | todo |
 | WI-18 | Verify orchestrator and merge | PIP-1, PIP-2, SEC-2, SEC-4, NFR-6 | WI-13–WI-17, WI-10 | todo |
 
@@ -204,6 +208,7 @@ lands. Design notes for larger items live in [docs/design/](design/).
     - Set `Snapshot.NonSwitchable` for every declared non-switchable change, even when LightsOn is false. It wins over LightsOn.
     - Bump `Generation` on every edit to impact, recovery, callers or rollout order, including an edit that is later restored. Never reuse a generation. ImpactRevision and RecoveryRevision are digests of the recorded effects and steps. Include the old paths of renames in OwnerAreas.
     - Still owned here: independent mandatory gate results, errant flag-off side effects (WI-16), isolation under INT-18 (WI-14), expand and contract trains, and "missing evidence requires coverage or replanning". Open decision: whether PIP-9 approvals need their own authz operation.
+  From WI-16: `oracle.Evaluate` reports an errant flag-off side effect as a `difference` on the affected boundary (for example `queued-jobs`). WI-17 consumes that for non-switchable changes; it never downgrades it.
 - **WI-18** The control plane alone merges, through the queue (SEC-2). Secret and dependency scans are mandatory
   baseline gates (SEC-4). Every agent commit carries the contract's trailer (NFR-6). Issues and Checks show the stage
   and disposition (PIP-1).
@@ -222,6 +227,12 @@ lands. Design notes for larger items live in [docs/design/](design/).
     - **Lights-on.** On NeedsAuthorization, authorize every RequiredApprovals target at execution time, in the merge transaction. Never cache a grant.
     - **Before publishing or merging,** check StateVersion, PolicyRevision, InstallRevision, HeadSHA and PR against the current queue candidate in the same transaction. Route the replan obligation to the spec writer with who asked and why (INT-15). Audit the Decision and its Rejected records; escape claim text and paths in check output.
   From WI-23: switches.Compare(...).Verdict at the merge-group base and candidate is a mandatory Verify gate; blocked and error both fail. Build records from the detected Switch and show the switch table in the PIP-1 output. How P2 applies to PRs that change an existing switch is undecided ([#11](https://github.com/elliott-davis/lightsout/issues/11)); until then Compare blocks them.
+  From WI-16:
+    - **Inputs.** Derive `BaselineSHA` from the previous queue member's candidate, or the group base for the first member; ejecting a member invalidates every later member's oracle evidence. Put both sides of renames and deleted paths in the Effective. Read each case manifest at `eff.Revision`. Fetch every artifact of the oracle job's run attempt and pass them all (Evaluate checks uniqueness). Pass `switches.Compare` of the sets detected at the exact baseline and candidate SHAs. `switches.Comparison` carries no SHAs, so the caller must bind them: compute it at exactly `BaselineSHA` and the candidate SHA.
+    - **Merge.** `oracle.Decision` pass is a merge precondition for feature-dark, task and fix work. Persist and audit the whole Decision binding (both SHAs, requested and loaded configs, overrides, oracle revision, report and manifest digests, kind, issue, authorization ID) in the merge transaction (PIP-13 "Record").
+    - **Fix.** Also require the visible reproducer from WI-22 to fail on the baseline and pass on the candidate (INT-10); Evaluate checks only the comparison.
+    - **Sensitive paths.** An oracle pass never satisfies SEC-5: sensitive paths still need WI-15's security sign-off at merge.
+    - **Known limit.** The forced-off run doesn't exercise a call site's code fallback when the key is absent ([#14](https://github.com/elliott-davis/lightsout/issues/14)).
 
 ## Phase 4: Intake and holdouts
 
@@ -253,6 +264,7 @@ lands. Design notes for larger items live in [docs/design/](design/).
 - **WI-22** An owner-approved contract authorizes a narrow class of unflagged fixes, and QE records the report, callers,
   expected correction and the matching authorization. A visible reproducer must be red on the baseline and green on the
   candidate. Anything broader needs reclassification or a switch.
+  From WI-16: produce `oracle.FixAuthorization`: `ID`, `Repo`, `Issue`, `Oracle` (contract.GateKey) and exact-scalar `Deltas` {Case, Boundary, Record, Operation, Field, Before, After}, each authorizing exactly one difference. Bind it with authz to the issue; the struct carries `ContractRevision` (must equal the Effective's), `OracleRevision` and `CaseManifest` (hex digest), so an authorization approved for one oracle pin cannot be replayed under another. Also owned here: INT-10's "a contract can require a switch" and PIP-4's reclassification of behavioural work as a Feature or authorized Fix.
 - **WI-23** Detect OpenFeature manifests and flagd config, and make new switches default off (FLG-2). Record switch
   identity, owner, age, default and qualification status, and show them on GitHub (FLG-3).
   Done with follow-ups: WI-23b ([#8](https://github.com/elliott-davis/lightsout/issues/8), HIGH: Kubernetes ConfigMap and FeatureFlag delivery bypasses and an evaluator DoS) and WI-23a ([#9](https://github.com/elliott-davis/lightsout/issues/9), residual limits). Open decisions: where `tools/fdump` lives ([#10](https://github.com/elliott-davis/lightsout/issues/10)) and how P2 applies to existing switches ([#11](https://github.com/elliott-davis/lightsout/issues/11)).
