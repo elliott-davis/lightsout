@@ -25,6 +25,11 @@ const (
 	// [ValidatePath], which keeps Match and Contains costs predictable.
 	maxSegments = 256
 
+	// maxSegmentLen is the longest path segment [ValidatePath] accepts, in bytes
+	// (NAME_MAX). A longer name can't exist on any supported filesystem, and
+	// capping it bounds the work of matching one segment.
+	maxSegmentLen = 255
+
 	// maxDoubleStars bounds how many "**" segments [Witness] instantiates
 	// independently (2^n candidates).
 	maxDoubleStars = 3
@@ -46,6 +51,15 @@ type segment struct {
 // Pattern is a compiled, immutable path glob. The zero value matches nothing.
 type Pattern struct {
 	segments []segment
+	runes    int // total runes of the segment texts
+}
+
+func countRunes(segs []segment) int {
+	n := 0
+	for _, s := range segs {
+		n += utf8.RuneCountInString(s.text)
+	}
+	return n
 }
 
 func echo(s string) string {
@@ -107,12 +121,12 @@ func Compile(pattern string) (Pattern, error) {
 			segs = append(segs, segment{kind: kindLiteral, text: s})
 		}
 	}
-	return Pattern{segments: segs}, nil
+	return Pattern{segments: segs, runes: countRunes(segs)}, nil
 }
 
 // ValidatePath reports whether p is a valid repository-relative path. Errors
 // wrap [ErrInvalidPath]. Wildcard characters are allowed in paths. A path is
-// limited to 4096 bytes and 256 segments.
+// limited to 4096 bytes and 256 segments, and a segment to 255 bytes.
 func ValidatePath(p string) error {
 	bad := func(why string) error {
 		return fmt.Errorf("%w: %s: %s", ErrInvalidPath, echo(p), why)
@@ -141,6 +155,9 @@ func ValidatePath(p string) error {
 			return bad("empty segment")
 		case ".", "..":
 			return bad(`"." and ".." segments are not allowed`)
+		}
+		if len(s) > maxSegmentLen {
+			return bad("segment too long")
 		}
 	}
 	return nil
@@ -186,6 +203,33 @@ func (p Pattern) Match(path string) bool {
 	return rec(0, 0)
 }
 
+// Runes returns the total number of runes in the pattern's segments. Matching
+// costs at most (Runes()+1) times (path runes+1) steps, so consumers use it to
+// bound the work they allow.
+func (p Pattern) Runes() int { return p.runes }
+
+// Segments returns the number of segments in the compiled pattern. Consumers
+// use it to bound the cost of Match and Contains, which grow with it.
+func (p Pattern) Segments() int { return len(p.segments) }
+
+// WithDescendants returns a pattern that matches whatever p matches and every
+// path below a path p matches. A trailing "**" matches zero or more segments,
+// so appending one gives exactly "p, or any descendant of a p-match". It is
+// built from the compiled segments, not by compiling text, so it works for a
+// pattern of any length. The zero Pattern matches nothing and stays that way.
+func (p Pattern) WithDescendants() Pattern {
+	if len(p.segments) == 0 {
+		return p
+	}
+	if p.segments[len(p.segments)-1].kind == kindDoubleStar {
+		return p
+	}
+	segs := make([]segment, 0, len(p.segments)+1)
+	segs = append(segs, p.segments...)
+	segs = append(segs, segment{kind: kindDoubleStar, text: "**"})
+	return Pattern{segments: segs, runes: p.runes + 2}
+}
+
 // Rebase prefixes the pattern with the segments of dir, which are always
 // literal. dir "" means the repository root and returns p unchanged.
 func (p Pattern) Rebase(dir string) (Pattern, error) {
@@ -201,7 +245,7 @@ func (p Pattern) Rebase(dir string) (Pattern, error) {
 		segs = append(segs, segment{kind: kindLiteral, text: d})
 	}
 	segs = append(segs, p.segments...)
-	return Pattern{segments: segs}, nil
+	return Pattern{segments: segs, runes: countRunes(segs)}, nil
 }
 
 // memo caches boolean results for (i, j) index pairs.

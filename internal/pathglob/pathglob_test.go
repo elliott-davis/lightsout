@@ -105,11 +105,12 @@ func TestCompile_ErrorTruncatesInput(t *testing.T) {
 
 func TestValidatePath(t *testing.T) {
 	t.Parallel()
-	valid := []string{"a", "a/b", "a[1].txt", `a\b`, "we*rd/x?", "héllo/世界", strings.Repeat("a", 4096)}
+	valid := []string{"a", "a/b", "a[1].txt", `a\b`, "we*rd/x?", "héllo/世界", strings.Repeat("a", 255), strings.Repeat(strings.Repeat("a", 255)+"/", 15) + "a"}
 	invalid := []string{
 		strings.Repeat("a/", 256) + "a", // 257 segments
 		"", "/a", "a/", "a//b", ".", "..", "a/./b", "a/../b", "a\x00b",
-		"a/\xff", strings.Repeat("a", 4097),
+		"a/\xff", strings.Repeat("a", 4097), strings.Repeat("a", 256), "a/" + strings.Repeat("a", 4000),
+		strings.Repeat(strings.Repeat("a", 255)+"/", 17) + "a", // over 4096 bytes
 	}
 	valid = append(valid, strings.Repeat("a/", 255)+"a") // 256 segments
 	for _, p := range valid {
@@ -464,4 +465,70 @@ func FuzzCompileMatch(f *testing.F) {
 			t.Errorf("Contains(%q, %q) but %q matches only inner", patA, patB, path)
 		}
 	})
+}
+
+func TestWithDescendants(t *testing.T) { // CON-7
+	t.Parallel()
+	long := strings.Repeat("aa/", 169) + "aa" // near the pattern length limit
+	tests := []struct {
+		pattern string
+		path    string
+		want    bool
+	}{
+		{"deploy", "deploy", true},
+		{"deploy", "deploy/x/y", true},
+		{"deploy", "deployment/x", false},
+		{"src/*.go", "src/a.go/b", true},
+		{"src/*.go", "src/a.txt", false},
+		{"deploy/**", "deploy", true},
+		{"deploy/**", "deploy/x", true},
+		{"**/*.pem", "a/b.pem/c", true},
+		{long, long + "/x", true},
+	}
+	for _, tt := range tests {
+		got := mustCompile(t, tt.pattern).WithDescendants().Match(tt.path)
+		if got != tt.want {
+			t.Errorf("%.20q.WithDescendants().Match(%.20q) = %v, want %v", tt.pattern, tt.path, got, tt.want)
+		}
+	}
+	if _, err := Compile(strings.Repeat("aa/", 170) + "aa/**"); err == nil {
+		t.Fatal("test pattern is not at the limit")
+	}
+	over := mustCompile(t, strings.Repeat("aa/", 170)+"aa").WithDescendants()
+	if !over.Match(strings.Repeat("aa/", 170) + "aa/x") {
+		t.Error("a 512-byte pattern lost its descendants")
+	}
+	var zero Pattern
+	if zero.WithDescendants().Match("x") || zero.WithDescendants().Segments() != 0 {
+		t.Error("the zero pattern must keep matching nothing")
+	}
+	p := mustCompile(t, "a/b")
+	_ = p.WithDescendants()
+	if p.Match("a/b/c") || p.Segments() != 2 {
+		t.Error("WithDescendants changed the receiver")
+	}
+}
+
+func TestRunes(t *testing.T) { // CON-7
+	t.Parallel()
+	tests := []struct {
+		pattern string
+		want    int
+	}{{"a", 1}, {"src/**", 5}, {"*.go", 4}, {"a/*", 2}}
+	for _, tt := range tests {
+		p := mustCompile(t, tt.pattern)
+		if got := p.Runes(); got != tt.want {
+			t.Errorf("%q: Runes() = %d, want %d", tt.pattern, got, tt.want)
+		}
+		if got := p.WithDescendants().Runes(); got != tt.want+2 && !strings.HasSuffix(tt.pattern, "**") {
+			t.Errorf("%q: WithDescendants().Runes() = %d, want %d", tt.pattern, got, tt.want+2)
+		}
+	}
+	r, err := mustCompile(t, "x/*").Rebase("d\u00e9/y")
+	if err != nil || r.Runes() != 5 {
+		t.Errorf("Rebase Runes() = %d, %v", r.Runes(), err)
+	}
+	if (Pattern{}).Runes() != 0 {
+		t.Error("zero pattern has runes")
+	}
 }

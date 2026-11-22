@@ -5,6 +5,7 @@ package contract
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -33,6 +34,13 @@ type Contract struct {
 	Agents     Agents    `json:"agents"`
 	LightsOn   *bool     `json:"lightsOn,omitempty"` // nil = not declared
 	Overrides  Overrides `json:"overrides"`
+
+	// digest is the SHA-256 of the contract's canonical JSON, set by the Parser
+	// after the contract passed the schema. Compile skips its own schema pass
+	// when a contract still has the same digest: any later change to a field
+	// changes the JSON, so a mutated or hand-built contract is validated again.
+	digest   [sha256.Size]byte
+	digested bool
 }
 
 // Paths holds path patterns, anchored at the contract's directory.

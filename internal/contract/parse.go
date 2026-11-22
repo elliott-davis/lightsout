@@ -5,6 +5,7 @@ package contract
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -145,6 +146,9 @@ func (p *Parser) parse(dir string, data []byte) (*Contract, []Problem) {
 		return nil, ps
 	}
 	c.Dir = dir
+	if data, err := canonicalJSON(&c); err == nil {
+		c.digest, c.digested = sha256.Sum256(data), true
+	}
 	return &c, nil
 }
 

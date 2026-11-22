@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/elliott-davis/lightsout/internal/pathglob"
 )
@@ -127,7 +128,7 @@ func TestParse_PRDExample(t *testing.T) { // CON-11
 		LightsOn:  &lightsOn,
 		Overrides: Overrides{SwitchStaleDays: &stale, ReviewBudgetLines: &budget},
 	}
-	if diff := cmp.Diff(want, got); diff != "" {
+	if diff := cmp.Diff(want, got, cmpopts.IgnoreUnexported(Contract{})); diff != "" {
 		t.Errorf("contract mismatch (-want +got):\n%s", diff)
 	}
 }

@@ -42,6 +42,16 @@ const (
 	CodeInvalidPattern Code = "invalid-pattern"
 	// CodeTooMany marks an exceeded count limit, or the note that problems were omitted.
 	CodeTooMany Code = "too-many"
+	// CodeLoosening marks a child contract that loosens a safety field of an
+	// ancestor or of the factory baseline (CON-5, CON-12).
+	CodeLoosening Code = "loosening"
+	// CodeConflict marks gate declarations that can never both pass: the same
+	// identity twice in one contract, or pinned at different revisions on one stack.
+	CodeConflict Code = "conflict"
+	// CodeMissingWritable marks a topmost contract without paths.writable (CON-7).
+	CodeMissingWritable Code = "missing-writable"
+	// CodeUnknownAgent marks an agents.verify entry that is not in the agent catalog (AGD-3).
+	CodeUnknownAgent Code = "unknown-agent"
 )
 
 // Problem is one validation finding.

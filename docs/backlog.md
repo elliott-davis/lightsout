@@ -25,7 +25,8 @@ lands. Design notes for larger items live in [docs/design/](design/).
 | --- | --- | --- | --- | --- |
 | WI-01 | Path globs | CON-7, CON-12 (support) | — | done (7966634) |
 | WI-02 | Contract schema, parsing and discovery | CON-11, CON-4, CON-1 | — | done |
-| WI-03 | Effective contract resolver and relational validation | CON-3, CON-5, CON-7, CON-9, CON-12, AGD-3, SEC-5 | WI-01, WI-02 | todo |
+| WI-03 | Effective contract resolver and relational validation | CON-3, CON-5, CON-7, CON-9, CON-12, AGD-3, SEC-5 | WI-01, WI-02 | done |
+| WI-03a | Bound cross-stack source merging in Resolve | CON-3 (availability), SEC-1 | WI-03 | todo |
 | WI-04 | Incremental validation, explain, gate registry check, CLI | CON-13, CON-4 | WI-03 | todo |
 | WI-05 | Append-only audit log | NFR-4, RUN-5, AGT-6 | — | done |
 | WI-06 | Identities, roles and revision-bound decisions | SEC-10, NFR-5 | WI-05 | done |
@@ -44,8 +45,16 @@ lands. Design notes for larger items live in [docs/design/](design/).
   ancestor directory. A path that fails `ValidatePath` (including one over 256 segments) is an error, never
   "allowed", and gets a denial test. Re-validate any contract given to the resolver, since `NewSet` accepts
   hand-built ones. Document that `*.pem` is anchored and doesn't match `certs/key.pem`.
+- **WI-03a** The first WI-03 follow-up, which the user deferred from WI-03 on 2026-11-21. The change-level merge in `Resolve`
+  (`mergeObligations`, `mergeOracles`, `mergeRequirements`) re-clones and re-sorts a shared identity's source list on every
+  duplicate, and charges only the obligation count. With 1000 contracts sharing 64 gates per stage, and a change touching 969 paths,
+  one Resolve takes 30 s to 3.5 min and never fails closed. The cost is quadratic in the number of stacks. Fix: gather each identity's sources
+  across stacks and sort and dedupe once, charge Σ len(Sources) plus the final sort, and cache source ranks.
+  Add a regression test for the shape and a mutant check. Its verification audits every loop in Compile and Resolve
+  for an uncharged cost, not just this one. Security results are correct today; this is an availability issue only.
 - **WI-04** Incremental validation of a contract with its ancestors and descendants; an explain command
   that shows each effective value and its source (CON-13); registered-identity and revision check against a consumer-defined registry (CON-4).
+  From WI-03: `ValidateChanged` wraps `Policy.validate(dirs)`. The scope is the changed contracts, their dirKey ancestors and descendants, and any directory whose key collides with them (a parent re-pin makes descendants conflict). `Explain` surfaces `AccessSource`, `SensitiveSources`, `LightsOnSources`, `Obligation.Sources` and `Valued.Source`, all of which already exist, and must escape the raw repo path text they carry. `CheckGates` covers the baseline gates too. `buildStacks` sets no problem when a contract over the gate cap lies outside a partial scope: with incremental scopes, always record a problem or fail closed.
 - **WI-05** `internal/audit`: an append-only interface with no update or delete, and hash-chained entries. Every entry
   has an actor and a subject (change, issue or install). Agent and factory entries carry the template or build version
   (RUN-5). Every agent tool call, model call and repo write names a change or, before a PR exists, an issue (AGT-6). A
@@ -61,6 +70,7 @@ lands. Design notes for larger items live in [docs/design/](design/).
   role (RUN-6, AGT-7), and a qualification record check that runs before admission (NFR-2 data). Validation fails any role
   that combines untrusted input, secrets and open egress (SEC-1).
   From WI-06: supply `authz.Config` (`Forge`, `InstallID`, per-operation `Expiry` with none as the default, `DenialAuditTimeout`). Define the install's admin principals by forge and stable ID, never by login, and who may change that list. Decide whether install-config changes go through authz (the PRD names "admin" in SEC-6 but only "Enterprise IT" in the roles table).
+  From WI-03: supply `contract.Baseline` (mandatory gates, `Reviewers`, `PRReviewer` distinct from `SecurityReviewer`, `KnownAgents`, `Protected` patterns such as `.github/workflows/**` and `CODEOWNERS`) and `contract.Defaults` (each at least 1). `Compile` validates them, but install-time validation should report errors earlier and more clearly.
 
 ## Phase 2: forge boundary and control-plane state
 
@@ -100,6 +110,7 @@ lands. Design notes for larger items live in [docs/design/](design/).
   Protected-path matching case-folds, so a product PR can't add `x/.Factory.yaml`. That would fail every later
   contract load closed.
   From WI-06: use `authz.OpActivateContract` with `Target.Revision` set to the contract proposal revision and `Paths` set to the area. Require one grant per affected owner area under the previously trusted CODEOWNERS. Test that a proposal whose own CODEOWNERS edit would make the approver an owner is denied.
+  From WI-03: protected-path classification already exists (`PathPolicy.Protected`; contract files and `Baseline.Protected` are always Forbidden). Reuse it; don't build a second matcher. Bind activation to `Effective.Revision`.
 - **WI-12** `internal/forge/github`: go-github implementation of WI-08, GitHub App auth, issue types, Checks
   publishing and the merge queue. Contract tests run the same suite against the fake and against recorded fixtures.
 
@@ -117,16 +128,19 @@ lands. Design notes for larger items live in [docs/design/](design/).
 - **WI-13** Every mandatory gate needs an execution record with its trusted producer, workflow identity, pinned
   revision, job identity, merge-group SHA, actual execution and explicit success. Skipped, neutral, missing, stale,
   foreign and same-name results block. A new queue head invalidates earlier results.
+  From WI-03: treat `Effective.Conflicts` as a block, bind results to `Effective.Revision`, and treat `Obligation.Owner == factory` as unwaivable.
 - **WI-14** A change outside writable paths fails unless it touches only read-only paths and a path owner approves (CON-7).
   A change that mixes writable and read-only paths fails.
   A product PR that touches a protected path fails (CON-6). Shape rules fail with their gate ID (INT-18). The soft
   review budget counts hand-written lines only, and detects generated files from linguist attributes, DO NOT EDIT
   headers and contract paths, and compares the total against the smallest budget that applies (INT-19). The shape
   rules don't trust contract-declared `generated` paths alone.
+  From WI-03: `Effective` has no change-level verdict. Build "all writable, or all read-only plus owner approval; mixed fails" from `Paths[i].Access`. Uncovered, Protected, `ErrInvalidPath` and `ErrTooComplex` all fail. Use the smallest `ReviewBudgetLines` across paths. `Generated` is an override, so never trust it alone. Escape raw path text in any output.
 - **WI-15** Reviewer context excludes coder reasoning and holdouts (AGT-3). Provisional blocks carry location,
   invariant, consequence and verification plan, with confirmation or dismissal on evidence (AGT-4, P4). A round cap
   escalates to an owner (AGT-5). Sensitive paths need security signoff (SEC-5). Lights-on needs current owner
   approval of the exact change, impact and recovery plan (CON-8). A split request becomes a replan request (INT-20).
+  From WI-03: when `SecuritySignoffRequired` is set, require explicit approval from `Effective.SecurityReviewer`. Every change needs both core reviewers plus the specialists from each stack (`Effective.Stacks[i].Reviewers`).
 - **WI-16** Compare baseline and merge-group candidate on responses, reads, writes, events and queued jobs. Dark
   features and Tasks require equivalence (PIP-4). An authorized Fix permits only its delta (INT-10). Record both
   SHAs, configs, the oracle revision and the result.
