@@ -238,3 +238,16 @@ Every reviewer brief had to spell out which layer was theirs: "the `git diff` (w
 - **An agent's report is a claim, not evidence (P4).** The factory must check every claimed change against the diff and against a test that would fail without it. Docs and comments agreeing with the claim prove nothing; here they were the only places the change landed.
 - **Brief-driven requirements need a killing test (AGT-4, P4).** Any requirement stated as a value, such as a limit, cap, timeout or default, needs a test that pins that value. Otherwise "done" can't be told apart from "documented".
 - **Reviewers need their own oracle.** Corpus runs and mutation testing caught this; reading the report could not. The reviewer role should be able to run its own checks rather than reading the implementor's summary (AGT-3).
+
+## 19. Parking work outside the tree rewrote filenames
+
+**What happened.**
+- **Why files were parked:** the pre-commit hook stashes unstaged tracked files but not untracked ones. To commit one work item while others' untracked packages sat in the same tree, their files were moved to a scratch directory and moved back afterwards.
+- **The damage:** the round trip back went through `tar`, which wrote five corpus filenames in Unicode NFD (`e` plus a combining accent) instead of the NFC (`é`) git had recorded. On macOS git still showed the tree as clean, because `core.precomposeunicode` folds the two forms together.
+- **What caught it:** the differential test reads filenames from disk, and flagd's ASCII-only extension rule gives a different extension for the two forms. `make check` failed in the main tree while a clean worktree of the same commit passed.
+- **The cost:** small, because the commit was right and only the working copy was wrong. A commit made *from* that working copy would have recorded the wrong names.
+
+**Product implication.**
+- **Never share a mutable workspace between work items (RUN-1).** Moving another item's files aside is a workaround for a shared tree, and every workaround is a new way to corrupt it. Each work item needs its own worktree or sandbox.
+- **Verify from a fresh checkout of the exact commit (PIP-2).** A green run in the working tree, or a "clean" `git status`, doesn't prove the tree matches the commit. Only the clean-worktree runs distinguished "commit wrong" from "working copy wrong".
+- **Byte-exact path identity matters to gates.** Gates that read repo paths must take them from the git tree at a SHA, as `gittree` does, never from a host filesystem that can normalize names.
