@@ -289,3 +289,16 @@ Every reviewer brief had to spell out which layer was theirs: "the `git diff` (w
 - **Denial tests need a proof that the hostile form is present.** A test for an encoding attack should assert on the raw bytes it sends (for example that the request contains `c`), not only on the verdict.
 - **An agent's "already done" is a claim to verify (P4).** Independent reviewers check claims against bytes, never against the author's description.
 - **It recurred within hours.** WI-21's implementor, warned about this note in its brief, wrote hostile-path tests with `\u200c`-style escapes; the file came out holding the raw characters. Lint flagged it and the agent restored the escapes with a script. A warning in the brief helped only because a second, independent check (lint on raw bytes) existed. Mechanical byte-level checks beat instructions.
+
+## 23. Fixing a gate for one consumer regressed it for another
+
+**What happened.** WI-23b's switch detection had been bypassed by Kubernetes manifests that our heuristics misread. The rework emulated `kubectl apply -f` exactly, and a differential against the real decoder found 0 disagreements in 300,000 inputs.
+- **The regression:** the security reviewer then fed the same inputs through Kustomize (kyaml) and Helm's splitter. Several that `main` blocked now passed, because those readers resolve merge keys and separator lines differently from kubectl. A three-reader union fixed that.
+- **It happened again:** the final review found that our *port* of kyaml differs from real kyaml on keys with no text. Real kyaml re-encodes them as `''`, so Kustomize applies an object all three ports refuse.
+- **A false "unreachable":** in the same round, the implementor removed a depth check it judged unreachable to satisfy a mutation test. The Go reviewer showed embedded JSON reaches it, and without it a 130 KB string costs 16 s and 62 GB.
+- **Outcome:** the item hit the three-round cap with that HIGH open and was left uncommitted for a human decision.
+
+**Product implication.**
+- **A gate is only as strict as its least-modelled consumer.** When the factory decides what a change "does" by emulating a downstream tool, it must enumerate every delivery path the contract allows. It treats the union as the truth, and it fails closed on any path it doesn't model (FLG-2, P4).
+- **Differentials need an oracle per consumer.** One exact differential gave false confidence. Each modelled consumer needs its own recorded oracle, and the gate must name the consumers it covers.
+- **"Dead code" claims are evidence-bound like any other.** Removing a check to kill a surviving mutant needs a proof of unreachability, or a reviewer's attempt to reach it. Otherwise keep the check and accept the equivalent mutant.
