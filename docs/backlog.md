@@ -28,7 +28,7 @@ lands. Design notes for larger items live in [docs/design/](design/).
 | WI-03 | Effective contract resolver and relational validation | CON-3, CON-5, CON-7, CON-9, CON-12, AGD-3, SEC-5 | WI-01, WI-02 | todo |
 | WI-04 | Incremental validation, explain, gate registry check, CLI | CON-13, CON-4 | WI-03 | todo |
 | WI-05 | Append-only audit log | NFR-4, RUN-5, AGT-6 | — | done |
-| WI-06 | Identities, roles and revision-bound decisions | SEC-10, NFR-5 | WI-05 | todo |
+| WI-06 | Identities, roles and revision-bound decisions | SEC-10, NFR-5 | WI-05 | done |
 | WI-07 | Install config, role profiles and admission | RUN-6, AGT-7, NFR-2, SEC-1, CON-9, CON-5 | WI-03 | todo |
 
 - **WI-01** `internal/pathglob`: anchored globs (`*`, `?`, `**`), strict syntax, matching, and a conservative
@@ -60,6 +60,7 @@ lands. Design notes for larger items live in [docs/design/](design/).
   the factory baseline gates (SEC-4 identities) and core reviewers, one pinned runtime, harness and model profile per enabled
   role (RUN-6, AGT-7), and a qualification record check that runs before admission (NFR-2 data). Validation fails any role
   that combines untrusted input, secrets and open egress (SEC-1).
+  From WI-06: supply `authz.Config` (`Forge`, `InstallID`, per-operation `Expiry` with none as the default, `DenialAuditTimeout`). Define the install's admin principals by forge and stable ID, never by login, and who may change that list. Decide whether install-config changes go through authz (the PRD names "admin" in SEC-6 but only "Enterprise IT" in the roles table).
 
 ## Phase 2: forge boundary and control-plane state
 
@@ -77,6 +78,7 @@ lands. Design notes for larger items live in [docs/design/](design/).
   Includes a read-only `fs.FS` over a git tree at a commit, which is the only input `contract.Load` may be given in
   production. Adapters must `url.PathEscape` gate identity values (`workflowId`, `checkId`) when building API paths.
 - **WI-09** Parse CODEOWNERS (gitignore semantics) at a trusted revision and resolve each path's current owners.
+  From WI-06: implement the owner roles of `authz.RoleSource` (`path-owner`, `code-owner`, `contract-owner`). Resolve by forge and stable ID, mapping the ID to its current login and team membership at execution time with no cache. Return true only when the principal owns every path in `Target.Paths`, and deny on any lookup error. Define how code-owner and contract-owner differ. Negative tests: a renamed login, a recycled login, and a team removal between decision and execution.
 - **WI-10** PostgreSQL-backed state for issues, changes, features and trains; idempotent webhook ingestion with
   signature checks; one authorization path for issue events, checks, callbacks, API and admin actions (NFR-5).
   The PostgreSQL audit backend implements `audit.Backend` and serializes head selection and insert in the transaction
@@ -84,12 +86,20 @@ lands. Design notes for larger items live in [docs/design/](design/).
   The first HTTP surface: write its OpenAPI document first and serve it with chi (AGENTS.md, API first). Generate
   types and handler interfaces with oapi-codegen's chi strict-server output (tool pinned in `tools/go.mod`, plus its
   runtime module); justify both in the PR description.
+  From WI-06 (see docs/design/authz.md, "Caller contract" and "Notes for WI-10"):
+  - Route human decisions from `issue-comment`, `review`, `api` and `admin-cli` only through `Authorize`. Checks and callbacks use service identities (WI-30).
+  - Set `Authenticated` only after the signature or credential check. Set `IntegrityOriginal` only after re-reading the forge's edit state at execution time.
+  - Implement `authz.Tx`: `Consume` is a unique index that is never purged, and the grant append and the caller's state change share one transaction.
+  - Act only through a compare-and-swap on `Grant.Target.Revision`.
+  - Serialize the denial auditor's chain with the transactional one, or keep them on separate chains.
+  - Rate-limit before `Authorize`, and never echo `DeniedError.Reason` back to the caller.
 - **WI-11** Activation of a contract revision requires approval of that exact revision by a current owner,
   under the previously trusted ownership and gate rules. A product change can never supply the policy that
   authorizes it (CON-2). Protected paths (contracts, CI definitions, CODEOWNERS) fail a product PR, and a protected
   proposal is evaluated under the current trusted policy (CON-6). An onboarder draft goes through the same path (CON-10).
   Protected-path matching case-folds, so a product PR can't add `x/.Factory.yaml`. That would fail every later
   contract load closed.
+  From WI-06: use `authz.OpActivateContract` with `Target.Revision` set to the contract proposal revision and `Paths` set to the area. Require one grant per affected owner area under the previously trusted CODEOWNERS. Test that a proposal whose own CODEOWNERS edit would make the approver an owner is denied.
 - **WI-12** `internal/forge/github`: go-github implementation of WI-08, GitHub App auth, issue types, Checks
   publishing and the merge queue. Contract tests run the same suite against the fake and against recorded fixtures.
 
@@ -140,6 +150,7 @@ lands. Design notes for larger items live in [docs/design/](design/).
   affected paths and duplicate or conflicting issues (INT-2). A proposed and confirmed type mapped to GitHub
   issue types or `type:` labels (INT-3). No owner gate at intake (INT-8). Splits become sub-issues (INT-11). Refusal reasons
   cover no covering contract, forbidden paths needed and multi-repo work (INT-12).
+  From WI-06: implement the ideator `RoleSource`. The ideator must be a verified human who is eligible under the intake policy. A bot-opened issue has no ideator until one is bound, a transfer needs a fresh binding, and any delegation is audited. Proposal revisions are 40- or 64-hex digests, unique per subject and new on every edit, including reverts. The `decide-split` Choice is the digest of the kept set. Store the rejection comment with the state change. Decide whether submitting an idea is itself an audited decision.
 - **WI-20** Ideator approval of the exact scenario revision before any spec (INT-4). Spec and plan committed under a
   factory path keyed by switch or issue ID (INT-5). The plan is a dependency graph whose first PR adds the switch, off (INT-14).
   Only the spec writer replans, every replan is logged, and replans are capped (INT-15). An explicit complete state (INT-16).
@@ -218,9 +229,11 @@ lands. Design notes for larger items live in [docs/design/](design/).
   minutes per feature, including failed attempts. Team and train totals reconcile (COST-5).
 - **WI-36** Only a current admin halts or resumes. A halt fences sessions, queued actions and merges. A resume
   binds to the halt revision, and replays are denied and logged.
+  From WI-06: use `OpHalt` and `OpResume` (role admin, install scope, subject = InstallID). The halt generation is a unique digest, so a resume for H1 that arrives after H2 is stale. Define what a halt binds to. Tests: a revoked former admin is denied for both halt and resume, and a replayed resume is denied and logged.
 - **WI-37** One integration suite on every control-plane change. It denies a forged approval, a stale owner
   approval, an unauthorized resume, a same-name foreign check and coder access to a private fixture, finds no leak
   in published Acceptance output, and lets a matching authorized approval succeed.
+  From WI-06: lift the unit SEC-11 cases (forged approval, stale owner approval, unauthorized resume, matching approval succeeds) into this suite, run against the real forge fake, store and CODEOWNERS source.
 
 ## Phase 8: qualification
 

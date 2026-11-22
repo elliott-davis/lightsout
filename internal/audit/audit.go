@@ -122,9 +122,12 @@ const (
 // [ActionDecision] and forbidden otherwise.
 type Decision struct {
 	Operation string // the intended action, for example "approve-scenarios" or "resume"
-	Role      string // the role that was checked
-	// Revision is the exact proposal revision the decision binds to. It must be an immutable revision, commit SHA
-	// or manifest digest, never a branch or tag (WI-06 enforces this).
+	// Role is the role that was checked. Required for a granted verdict. A denial may lack evidence the request
+	// never supplied, so it may be empty when the verdict is denied.
+	Role string
+	// Revision is the exact proposal revision the decision binds to. The authz package requires a 40- or 64-digit
+	// lowercase hex digest (a git SHA or a SHA-256), never a branch or tag. The audit log enforces that for a granted verdict and may
+	// be empty on a denial, for the same reason as Role.
 	Revision string
 	Verdict  Verdict
 	Reason   string // why, especially for denials; optional for granted

@@ -48,6 +48,9 @@ func agentRec() Record {
 	}
 }
 
+// testRev is a valid revision digest for granted decisions.
+const testRev = "0123456789abcdef0123456789abcdef01234567"
+
 func decisionRec(v Verdict) Record {
 	return Record{
 		Actor:   Actor{Kind: ActorHuman, ID: "github:12345", Display: "octocat"},
@@ -56,7 +59,7 @@ func decisionRec(v Verdict) Record {
 		Target:  "scenarios",
 		Outcome: string(v),
 		Decision: &Decision{
-			Operation: "approve-scenarios", Role: "code-owner", Revision: "abc123", Verdict: v, Reason: "because",
+			Operation: "approve-scenarios", Role: "code-owner", Revision: testRev, Verdict: v, Reason: "because",
 		},
 	}
 }
@@ -293,13 +296,14 @@ func TestAppend_DecisionEvidence(t *testing.T) { // SEC-10 data
 		mutate func(*Record)
 		field  string
 	}{
-		"no decision":       {func(r *Record) { r.Decision = nil }, "decision"},
-		"no operation":      {func(r *Record) { r.Decision.Operation = "" }, "decision.operation"},
-		"no role":           {func(r *Record) { r.Decision.Role = "" }, "decision.role"},
-		"no revision":       {func(r *Record) { r.Decision.Revision = "" }, "decision.revision"},
-		"no verdict":        {func(r *Record) { r.Decision.Verdict = "" }, "decision.verdict"},
-		"unknown verdict":   {func(r *Record) { r.Decision.Verdict = "maybe" }, "decision.verdict"},
-		"decision on other": {func(r *Record) { r.Action = ActionAdmin }, "decision"},
+		"no decision":             {func(r *Record) { r.Decision = nil }, "decision"},
+		"no operation":            {func(r *Record) { r.Decision.Operation = "" }, "decision.operation"},
+		"granted no role":         {func(r *Record) { r.Decision.Verdict = VerdictGranted; r.Outcome = ""; r.Decision.Role = "" }, "decision.role"},
+		"granted no rev":          {func(r *Record) { r.Decision.Verdict = VerdictGranted; r.Outcome = ""; r.Decision.Revision = "" }, "decision.revision"},
+		"granted rev is a branch": {func(r *Record) { r.Decision.Verdict = VerdictGranted; r.Outcome = ""; r.Decision.Revision = "main" }, "decision.revision"},
+		"no verdict":              {func(r *Record) { r.Decision.Verdict = "" }, "decision.verdict"},
+		"unknown verdict":         {func(r *Record) { r.Decision.Verdict = "maybe" }, "decision.verdict"},
+		"decision on other":       {func(r *Record) { r.Action = ActionAdmin }, "decision"},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -308,6 +312,30 @@ func TestAppend_DecisionEvidence(t *testing.T) { // SEC-10 data
 			tc.mutate(&r)
 			assertInvalid(t, r, tc.field)
 		})
+	}
+}
+
+func TestLog_DeniedDecisionMayLackRoleAndRevision(t *testing.T) { // SEC-10
+	t.Parallel()
+	l := newMemLog(t)
+	r := decisionRec(VerdictDenied)
+	r.Decision.Role, r.Decision.Revision = "", ""
+	if _, err := l.Append(t.Context(), r); err != nil {
+		t.Fatalf("denied without role and revision: %v", err)
+	}
+	g := decisionRec(VerdictGranted)
+	g.Decision.Role, g.Decision.Revision = "", ""
+	assertInvalid(t, g, "decision.role")
+}
+
+func TestLog_GrantedDecisionRequiresHuman(t *testing.T) { // SEC-10
+	t.Parallel()
+	r := decisionRec(VerdictGranted)
+	r.Actor = Actor{Kind: ActorExternal, ID: "github:1"}
+	assertInvalid(t, r, "actor.kind")
+	r.Decision.Verdict, r.Outcome = VerdictDenied, "denied"
+	if _, err := newMemLog(t).Append(t.Context(), r); err != nil {
+		t.Fatalf("external denial: %v", err)
 	}
 }
 

@@ -155,12 +155,15 @@ func validateDecision(r Record) error {
 		return invalid("decision", "required for %s", ActionDecision)
 	case d.Operation == "":
 		return invalid("decision.operation", "required")
-	case d.Role == "":
-		return invalid("decision.role", "required")
-	case d.Revision == "":
-		return invalid("decision.revision", "required")
 	case d.Verdict != VerdictGranted && d.Verdict != VerdictDenied:
 		return invalid("decision.verdict", "unknown verdict %s", clip(string(d.Verdict)))
+	case d.Verdict == VerdictGranted && r.Actor.Kind != ActorHuman:
+		// Defence in depth: only a verified human can be granted a decision.
+		return invalid("actor.kind", "a granted decision requires a human actor")
+	case d.Verdict == VerdictGranted && d.Role == "":
+		return invalid("decision.role", "required for a granted decision")
+	case d.Verdict == VerdictGranted && !validRevisionDigest(d.Revision):
+		return invalid("decision.revision", "a granted decision requires a 40 or 64 digit lowercase hex digest")
 	case r.Outcome != "" && r.Outcome != string(d.Verdict):
 		return invalid("outcome", "must be empty or equal the verdict for %s", ActionDecision)
 	}
@@ -241,4 +244,18 @@ func sortedKeys(m map[string]string) []string {
 	}
 	slices.Sort(keys)
 	return keys
+}
+
+// validRevisionDigest accepts a git SHA-1 or SHA-256 digest in lowercase hex.
+func validRevisionDigest(s string) bool {
+	if len(s) != 40 && len(s) != 64 {
+		return false
+	}
+	for i := range len(s) {
+		c := s[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
 }
