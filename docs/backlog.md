@@ -132,6 +132,7 @@ lands. Design notes for larger items live in [docs/design/](design/).
   - Rate-limit before `Authorize`, and never echo `DeniedError.Reason` back to the caller.
   From WI-08: map GetComment/GetReview re-reads to Integrity at execution time. EditUnknown, edited and deleted all deny. Check that Comment.Repo/Issue match the subject. Key issues by NodeID. ErrIncomplete and RateLimitError mean block and retry, never a partial result.
   From WI-07: implement install activation. It needs `quorum` granted OpActivateInstall decisions from distinct principals, taken only from the active revision's RoleSource, and consumed together with a compare-and-swap of the active generation in one transaction. Target.Revision = install.ActivationRevision(installID, activeGeneration, candidateCommit). Bootstrap happens once; refuse a second. Read the install config only via install.Load at a full SHA, refuse an empty InstallRevision on any production path, and store the install revision with every decision and evidence row. The quorum helper counts distinct principals, never grants; authz.Grant has no Principal field, so carry it alongside. Denial tests: the same approver twice; a member only of the candidate revision; a bot.
+  From WI-15: review.Evaluate fails closed on any signed record inconsistent with the snapshot, but can't detect a record deleted outright or one whose signature was corrupted. Build the review snapshot from audited store records with a completeness proof (a per-change chain or sequence range), and set Snapshot.Complete only when that proof checks.
 - **WI-11** Activation of a contract revision requires approval of that exact revision by a current owner,
   under the previously trusted ownership and gate rules. A product change can never supply the policy that
   authorizes it (CON-2). Protected paths (contracts, CI definitions, CODEOWNERS) fail a product PR, and a protected
@@ -160,7 +161,8 @@ lands. Design notes for larger items live in [docs/design/](design/).
 | --- | --- | --- | --- | --- |
 | WI-13 | Gate-of-record evaluation | PIP-2, CON-4 (execution match), SEC-11 (foreign check) | WI-03, WI-08 | done |
 | WI-14 | Path, protected-path and PR shape gates | CON-7, CON-6, INT-18, INT-19 | WI-11 | todo |
-| WI-15 | Review policy and evidence rule | AGT-3, AGT-4, AGT-5, SEC-5, AGD-3, CON-8, INT-20 | WI-03, WI-06 | todo |
+| WI-15 | Review policy and evidence rule | AGT-3, AGT-4, AGT-5, SEC-5, AGD-3, CON-8, INT-20 | WI-03, WI-06 | done |
+| WI-15a | Review evidence: dismissals and cross-claim confirmations | AGT-4, SEC-11 | WI-15 | todo |
 | WI-16 | Dark-merge oracle evaluation | PIP-13, PIP-4, INT-10 (comparison) | WI-13 | todo |
 | WI-17 | Non-switchable changes | PIP-9 | WI-14, WI-15 | todo |
 | WI-18 | Verify orchestrator and merge | PIP-1, PIP-2, SEC-2, SEC-4, NFR-6 | WI-13–WI-17, WI-10 | todo |
@@ -183,11 +185,17 @@ lands. Design notes for larger items live in [docs/design/](design/).
   escalates to an owner (AGT-5). Sensitive paths need security signoff (SEC-5). Lights-on needs current owner
   approval of the exact change, impact and recovery plan (CON-8). A split request becomes a replan request (INT-20).
   From WI-03: when `SecuritySignoffRequired` is set, require explicit approval from `Effective.SecurityReviewer`. Every change needs both core reviewers plus the specialists from each stack (`Effective.Stacks[i].Reviewers`).
+- **WI-15a** WI-15 follow-up (low; from the final security verification). (1) A key-verified, bound dismissal for an unknown claim is only rejected; make it inconsistent-evidence, as for confirmations, since its signed ClaimRef proves the claim existed (exploiting it needs a record deletion, which is WI-10's to prevent). (2) A verifier assigned to C1 who confirms naming C2 counts only against C1; also count it against the named claim when that claim is known.
 - **WI-16** Compare baseline and merge-group candidate on responses, reads, writes, events and queued jobs. Dark
   features and Tasks require equivalence (PIP-4). An authorized Fix permits only its delta (INT-10). Record both
   SHAs, configs, the oracle revision and the result.
 - **WI-17** Declared effects, affected callers, rollout order, recovery steps and owner approval of the exact revision.
   An errant flag-off side effect blocks. Expand and contract run as separate trains.
+  From WI-15:
+    - Build the approval with `review.ApprovalManifest` (internal/review/canon.go); don't define a second encoding.
+    - Set `Snapshot.NonSwitchable` for every declared non-switchable change, even when LightsOn is false. It wins over LightsOn.
+    - Bump `Generation` on every edit to impact, recovery, callers or rollout order, including an edit that is later restored. Never reuse a generation. ImpactRevision and RecoveryRevision are digests of the recorded effects and steps. Include the old paths of renames in OwnerAreas.
+    - Still owned here: independent mandatory gate results, errant flag-off side effects (WI-16), isolation under INT-18 (WI-14), expand and contract trains, and "missing evidence requires coverage or replanning". Open decision: whether PIP-9 approvals need their own authz operation.
 - **WI-18** The control plane alone merges, through the queue (SEC-2). Secret and dependency scans are mandatory
   baseline gates (SEC-4). Every agent commit carries the contract's trailer (NFR-6). Issues and Checks show the stage
   and disposition (PIP-1).
@@ -197,6 +205,14 @@ lands. Design notes for larger items live in [docs/design/](design/).
     - **Before publishing:** check PolicyRevision and InstallRevision against the current trusted revisions, recheck gate registration, re-evaluate right before publishing, and publish on the CandidateSHA.
     - **Dispositions.** pending means retry; blocked means repair or rerun; error means retry, then audit. Unvouched running records hold a change at pending indefinitely, so add a pending-timeout policy with escalation and an audit entry.
     - **Merge** requires the gate plus WI-14 (CON-6 also stops caller-workflow tampering for reusable gates), WI-15 and WI-16. Audit the Decision; escape gate names and reasons in check output. SEC-4 scans are registered factory-owned baseline gates.
+  From WI-15:
+    - **Dispatch.** Assignments use unguessable IDs. Each role gets its own session, never a coder session. Rounds have a monotonic Seq and a RoundID is never reused; a one-role follow-up is a new round. A round is superseded when the head changes. On Escalated, assign a contract owner exactly once.
+    - **Context manifest.** Spec, diff, callers of changed interfaces, contracts, history and public tests, all read-only; never coder reasoning, transcripts or holdouts. Acceptance test: a changed interface yields a caller item for an unchanged caller.
+    - **Signing.** The runtime signs the full assignment digest; key IDs are bound to the runtime's workload identity; review.Keys comes from install config with Kind set from that identity, never from the snapshot.
+    - **Inputs.** Resolve Effective over new paths, the old paths of renames and deleted paths, so SensitivePaths and LightsOn see all of them. Fill ChangedPaths from DiffReader, set Complete only when everything was read, and fill Snapshot.Gate from WI-13 at the current candidate.
+    - **Config.** Timers.ReviewRounds maps to Config.ReviewRounds and Baseline.PRReviewer to Config.PRReviewer. VerifyAttempts and VerifyTimeout need install-config fields. SizeGateID must equal WI-14's review-budget gate ID.
+    - **Lights-on.** On NeedsAuthorization, authorize every RequiredApprovals target at execution time, in the merge transaction. Never cache a grant.
+    - **Before publishing or merging,** check StateVersion, PolicyRevision, InstallRevision, HeadSHA and PR against the current queue candidate in the same transaction. Route the replan obligation to the spec writer with who asked and why (INT-15). Audit the Decision and its Rejected records; escape claim text and paths in check output.
 
 ## Phase 4: Intake and holdouts
 
