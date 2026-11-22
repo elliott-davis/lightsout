@@ -91,10 +91,11 @@ lands. Design notes for larger items live in [docs/design/](design/).
 | WI-09 | CODEOWNERS ownership resolution | CON-2 (ownership) | WI-08 | done |
 | WI-10 | State store and event loop (lands as WI-10a–c, see design/state.md) | NFR-5 (event paths), NFR-4 (durable store) | WI-05, WI-08 | in progress |
 | WI-10a | Store: interfaces, PostgreSQL and in-memory, audit backend, checkpoints | NFR-4, NFR-5 | WI-05, WI-08 | done |
-| WI-10b | Webhook ingestion over an OpenAPI-first chi surface | NFR-5 | WI-10a | todo |
+| WI-10b | Webhook ingestion over an OpenAPI-first chi surface | NFR-5 | WI-10a | done |
 | WI-10c | Event loop | NFR-5 | WI-10b | todo |
 | WI-10d | Store privilege check: exact allowlist, no owning roles ([#6](https://github.com/elliott-davis/lightsout/issues/6)) | NFR-4, NFR-5 | WI-10a | done |
 | WI-10e | Store: default-ACL check refuses a harmless global function default ([#16](https://github.com/elliott-davis/lightsout/issues/16)) | NFR-4 | WI-10d | todo |
+| WI-10f | Webhook ingestion: per-source limits for unauthenticated connections ([#17](https://github.com/elliott-davis/lightsout/issues/17)) | NFR-5, SEC-1 | WI-10b | todo |
 | WI-11 | Contract activation and protected policy path | CON-2, CON-6, CON-10 (review path) | WI-04, WI-06, WI-09, WI-10 | todo |
 | WI-12 | GitHub adapter | INTG-1 | WI-08 | todo |
 
@@ -139,6 +140,13 @@ lands. Design notes for larger items live in [docs/design/](design/).
   From WI-07: implement install activation. It needs `quorum` granted OpActivateInstall decisions from distinct principals, taken only from the active revision's RoleSource, and consumed together with a compare-and-swap of the active generation in one transaction. Target.Revision = install.ActivationRevision(installID, activeGeneration, candidateCommit). Bootstrap happens once; refuse a second. Read the install config only via install.Load at a full SHA, refuse an empty InstallRevision on any production path, and store the install revision with every decision and evidence row. The quorum helper counts distinct principals, never grants; authz.Grant has no Principal field, so carry it alongside. Denial tests: the same approver twice; a member only of the candidate revision; a bot.
   From WI-15: review.Evaluate fails closed on any signed record inconsistent with the snapshot, but can't detect a record deleted outright or one whose signature was corrupted. Build the review snapshot from audited store records with a completeness proof (a per-change chain or sequence range), and set Snapshot.Complete only when that proof checks.
   WI-10a (the store) is done; WI-10d ([#6](https://github.com/elliott-davis/lightsout/issues/6)) closes its two open HIGH findings in the startup privilege check and must land before WI-10c serves real traffic. CI runs the PostgreSQL tests in the `postgres` job (`make test-postgres`); making it a required check is [#12](https://github.com/elliott-davis/lightsout/issues/12). Follow-up: `internal/store/pgstore/testdata/schema.golden` is generated on PostgreSQL 16 and v1 supports only that major version. Supporting another needs a regenerated golden and its own CI job (a CI change, so a human decision).
+  WI-10c (serving WI-10b's handler): mount it under an `http.Server` with `ReadHeaderTimeout`, `ReadTimeout`, `WriteTimeout`, `IdleTimeout` and `MaxHeaderBytes` set, because the handler bounds body size and concurrency but not slow clients. `/readyz` must be cheap or cached, since it is unauthenticated. The loop must also scope-check every object it re-reads from a webhook hint (docs/design/state.md, "HTTP surface (WI-10b)").
+  From WI-10b, for WI-10c:
+  - Coalesce work per subject, so a deduplicated delivery (receipts are keyed by body digest) never loses a re-read that is still needed.
+  - Never widen scope from `repository_ids`, `added_repository_ids` or any other repository ID in a hint. Scope comes only from the install config.
+  - The `Scope` implementation must treat repository ID "" as installation-only and never match a repository-level entry. Give it a test.
+  - `organization` and `github_app_authorization` revocations are not hinted, so SEC-10 re-checks at execution time are required.
+  - The unsigned event header picks the parser, so a replayed body can at most create a spurious re-read hint.
   From WI-23: persist switches.Record keyed by (repo, key). Write FirstSeenRevision and FirstSeenAt once, when Compare first reports the key as New at a merged revision. Take Default from Switch.Status() at the latest trusted revision. Keep Qualification as append-only, audited transitions written in the same transaction as the Acceptance or Union state change. Store Owner by stable ID, never from flag metadata. Tests: re-detecting a key must not reset FirstSeenAt; a key removed and then re-added must be decided explicitly.
 - **WI-11** Activation of a contract revision requires approval of that exact revision by a current owner,
   under the previously trusted ownership and gate rules. A product change can never supply the policy that

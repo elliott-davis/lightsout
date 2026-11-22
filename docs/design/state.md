@@ -26,7 +26,12 @@ Status: accepted after a Codex review, 2026-11-21. WI-10 lands as three sub-item
   - the payload schema version
 
   The schema version, the CAS version and the approval digest are kept distinct. An evolving payload is versioned JSONB. A field is promoted to a column when SQL must enforce uniqueness, a relationship or a transition precondition.
-- **Atomic receipt.** Recording a delivery `(forge, delivery ID, body digest)` and enqueuing its work item happen in **one** transaction, so a crash can't leave a delivery recorded with its only work item lost. A repeat delivery ID with the same digest gets an idempotent 2xx. A repeat delivery ID with a different digest is rejected and audited.
+- **Atomic receipt.** Recording a delivery `(forge, delivery ID, body digest)` and enqueuing its work item happen in **one** transaction, so a crash can't leave a delivery recorded with its only work item lost. Receipts are **keyed by the SHA-256 of the verified body** (receipt ID `sha256-<hex>`), not by the forge's delivery ID, because `X-GitHub-Delivery` and `X-GitHub-Event` are not signed:
+  - A captured signed body replayed under fresh delivery IDs, or with a swapped event header, is an idempotent 2xx and enqueues once.
+  - Squatting a real delivery's ID with other bytes cannot block the real delivery, and conflicts can't grow the audit log.
+  - The GitHub GUID and event are kept as work-payload metadata only.
+  - The unsigned event header picks the parser, so a replayed body can at most create a spurious re-read hint. A hint is never authority, and the loop re-reads and re-authorizes everything.
+  - A conflict (the same receipt ID with a different digest) can only mean a SHA-256 collision. The 409 and audit path stays because the store contract allows it.
 - **Events are hints, never authority.** A work item says only "re-read X". The loop re-reads the authoritative forge objects (WI-08) before acting:
   - For a comment or review: its author, location, edit state and the author's current role.
   - For an approving review: also its current verdict and reviewed SHA.
@@ -213,10 +218,35 @@ func WriteCheckpoints(ctx, st Store, sink checkpoint.Sink, opts VerifyOptions) e
 ## HTTP surface (WI-10b)
 
 - **Spec:** `api/openapi.yaml` (OpenAPI 3.0.3) defines `POST /v1/webhooks/{forge}`, `GET /healthz` and `GET /readyz`.
-- **Generated code:** oapi-codegen chi strict-server output goes in `internal/api/gen` (DO NOT EDIT) via `go generate`. A drift test regenerates it and diffs.
+- **Generated code:** oapi-codegen chi strict-server output goes in `internal/api/gen` (DO NOT EDIT) via `go generate`. `make gen-check` (part of `make check`) regenerates it with the same `go:generate` line and diffs.
 - **Dependencies:** oapi-codegen is pinned in `tools/go.mod`, with `github.com/go-chi/chi/v5` and `github.com/oapi-codegen/runtime` at runtime.
 - **Raw-body handling:** the signature is checked by middleware that reads the bounded raw body *before* the generated handler decodes it. Tests drive signed bytes through the generated chi router.
 - **Errors:** RFC 9457 problem details with fixed messages.
+- **Status codes:**
+  - 202 for a new delivery, and also for an event type with no parser, for which nothing is recorded.
+  - 200 for an idempotent repeat of a recorded delivery, and for `ping` (nothing recorded).
+  - 400 for a malformed payload, a supported event without its installation or repository, or a bad `X-GitHub-Event` or `X-GitHub-Delivery` shape.
+  - 401 for a missing, malformed or wrong signature, including one made with a rotated-out secret.
+  - 403 when the signed installation or repository is not this install's. The scope check fails closed: an error is a 503.
+  - 404 for an unknown forge, 409 for a receipt ID seen with a different digest (a SHA-256 collision, audited) or a work key held by another producer, 411 without a `Content-Length` (chunked is refused), 413 above 25 MiB, 415 for a content type other than `application/json`, and 503 for a store, secrets, scope or audit failure.
+- **Work item:** key `delivery/<forge>/sha256-<hex body digest>`, kind `forge-event`, payload `{v, forge, delivery_id, hint}`.
+  - The `delivery/` key prefix is reserved for ingest. Another producer holding a key gives a 409 and a log line.
+  - The hint (`forge.EventHint`, filled by `internal/forge/github`) is IDs only: the installation, repositories and subject. It carries no raw body and no author, verdict or role.
+  - **Scope:** every repository the hint names (the signed one plus related ones, such as a sub-issue's) must pass `Scope.Allowed`. An installation-level event (no repository) is checked by installation alone. WI-10c must scope-check every object it re-reads from a hint too.
+  - **Revocation and membership events** (`installation`, `installation_repositories`, `member`, `membership`, `repository`) are recorded as hints and the repositories they name (`repository_ids`, `added_repository_ids`, `removed_repository_ids`) are listed in the hint as evidence only. They never widen scope. A `sub_issues` payload naming a sub-issue or parent issue must carry its repository (else 400). Authorization is always re-read at execution, whatever a hint says (SEC-10, NFR-5).
+  - **Strict parsing:** `encoding/json/v2` rejects duplicate keys at any depth, and keys match case-sensitively. Refs must pass `git check-ref-format` rules and 255 bytes.
+- **Header-binding precedence:** the generated router binds headers before the signature middleware runs. A request missing a routing header gets 400 before any signature check, and a missing or duplicated signature header gets 401 before the forge, content-type and size checks.
+- **Unauthenticated cost bounds:**
+  - The signature header and the secrets (at most 4; more is a 503 configuration error) are checked before the body is read, so a malformed signature reads zero body bytes.
+  - The body streams once into a buffer sized from `Content-Length` while every secret's HMAC is computed incrementally.
+  - A semaphore (`Deps.MaxConcurrentBodies`, default 16) bounds how many requests are in the authentication step (secrets lookup, body read, HMAC) at once. The secrets lookup happens under a slot, so unauthenticated requests cannot hammer the secrets backend.
+  - A request waits at most `Deps.SlotWait` (default 1 s, from the injected `Clock`) for a slot, then gets 503, and the wait also ends with the request context. The slot is released before scope and store processing.
+  - A read deadline (`Deps.BodyReadTimeout`, default 10 s) is set before the body is read, so an idle or slow body ends instead of holding a slot.
+  - `Content-Length` is required (411), so the buffer is sized once and a chunked body cannot stream past the cap before it is refused.
+- **New modules and why:**
+  - `github.com/go-chi/chi/v5` (runtime): the one REST router (AGENTS.md). The generated chi server is built on it.
+  - `github.com/oapi-codegen/runtime` (runtime): the helpers the oapi-codegen output imports (parameter binding and JSON body binding). Its indirect dependencies are `github.com/apapsch/go-jsonmerge/v2` and `github.com/google/uuid`.
+  - `github.com/oapi-codegen/oapi-codegen/v2` (tools only, in `tools/go.mod`): the pinned generator, run by `make gen` and checked by `make gen-check`. It is not part of the shipped binary.
 
 ## Event loop (WI-10c)
 

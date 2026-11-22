@@ -1,0 +1,125 @@
+openapi: 3.0.3
+info:
+  title: Lightsout control-plane API
+  version: 0.1.0
+  description: |
+    HTTP surface of the Lightsout factory. This document is the contract (AGENTS.md, "API first"): server code in
+    internal/api conforms to it, and tests compare the served routes against it.
+paths:
+  /v1/webhooks/{forge}:
+    post:
+      operationId: receiveWebhook
+      summary: Receive a forge webhook delivery
+      description: |
+        The body is verified in constant time against X-Hub-Signature-256 over the raw bytes (at most 25 MiB)
+        before it is decoded. Event and delivery headers are routing and deduplication inputs only. The payload
+        yields a hint ("re-read X"), never authority (NFR-5).
+
+        Receipts are keyed by the SHA-256 of the verified body, not by the delivery header, because the delivery and
+        event headers are not signed: a replay of the same bytes under any delivery ID or event header is an
+        idempotent repeat.
+
+        Outcomes: 202 for a new delivery, and also for an unsupported event, for which nothing is recorded. 200 for
+        an idempotent repeat of a recorded delivery, and for `ping`, for which nothing is recorded. 403 when the
+        signed installation, or any repository the payload names, is not this install's. 411 when the request has no
+        Content-Length (chunked bodies are refused). 409 when the receipt key
+        was seen with a different digest (a digest collision) or its work key is held by another producer.
+      parameters:
+        - name: forge
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Forge'
+        - name: X-GitHub-Event
+          in: header
+          required: true
+          schema:
+            type: string
+            pattern: '^[a-z_]{1,64}$'
+        - name: X-GitHub-Delivery
+          in: header
+          required: true
+          schema:
+            type: string
+            pattern: '^[A-Za-z0-9-]{1,64}$'
+        - name: X-Hub-Signature-256
+          in: header
+          required: true
+          schema:
+            type: string
+            pattern: '^sha256=[0-9a-f]{64}$'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+              # Kept as the verified raw bytes: the server never decodes the payload into a generic map.
+              x-go-type: json.RawMessage
+              x-go-type-import:
+                path: encoding/json
+      responses:
+        '200':
+          description: Idempotent repeat of a recorded delivery, or a ping. Nothing new was recorded.
+        '202':
+          description: A new delivery was recorded, or the event type is unsupported and nothing was recorded.
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+        '411':
+          $ref: '#/components/responses/Problem'
+        '413':
+          $ref: '#/components/responses/Problem'
+        '415':
+          $ref: '#/components/responses/Problem'
+        '503':
+          $ref: '#/components/responses/Problem'
+  /healthz:
+    get:
+      operationId: getHealth
+      summary: Liveness
+      responses:
+        '200':
+          description: The process is up.
+  /readyz:
+    get:
+      operationId: getReady
+      summary: Readiness
+      responses:
+        '200':
+          description: The server can take traffic.
+        '503':
+          $ref: '#/components/responses/Problem'
+components:
+  schemas:
+    Forge:
+      type: string
+      enum: [github]
+    Problem:
+      type: object
+      description: RFC 9457 problem details. Messages are fixed strings and never echo request content or internal errors.
+      required: [type, title, status]
+      properties:
+        type:
+          type: string
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+  responses:
+    Problem:
+      description: Problem details (RFC 9457).
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'

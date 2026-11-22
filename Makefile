@@ -11,7 +11,7 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo deve
 LDFLAGS := -s -w -X $(PKG)/internal/version.Version=$(VERSION)
 BASE    ?= origin/main
 
-.PHONY: help tools build fmt fmt-files fmt-check lint lint-fix test test-postgres cover vuln tidy-check actionlint dco check ci clean
+.PHONY: help tools build fmt fmt-files fmt-check lint lint-fix test test-postgres cover vuln tidy-check gen gen-check actionlint dco check ci clean
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  %-12s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -64,13 +64,21 @@ tidy-check: ## Fail if go.mod/go.sum need tidying (main and tools)
 	go mod tidy -diff
 	cd tools && go mod tidy -diff
 
+gen: ## Regenerate internal/api/gen from api/openapi.yaml
+	go generate ./internal/api/gen
+
+gen-check: ## Fail if internal/api/gen differs from what its go:generate line produces
+	@cd internal/api/gen && line=$$(sed -n 's#^//go:generate ##p' generate.go) && test -n "$$line" \
+		&& diff -u api.gen.go <(eval "$${line/ -o api.gen.go/}") \
+		|| { echo "internal/api/gen is stale (or has no go:generate line); run 'make gen'" >&2; exit 1; }
+
 actionlint: ## Lint GitHub Actions workflows
 	$(ACTIONLINT)
 
 dco: ## Check Signed-off-by on commits in $(BASE)..HEAD
 	scripts/check-dco.sh $(BASE)..HEAD
 
-check: fmt-check tidy-check lint test actionlint ## Everything that works offline
+check: fmt-check tidy-check gen-check lint test actionlint ## Everything that works offline
 
 ci: check vuln ## check + vuln
 
