@@ -31,7 +31,8 @@ lands. Design notes for larger items live in [docs/design/](design/).
 | WI-04a | Incremental scope versus the whole-set compile budget | CON-13 (availability) | WI-04 | todo |
 | WI-05 | Append-only audit log | NFR-4, RUN-5, AGT-6 | — | done |
 | WI-06 | Identities, roles and revision-bound decisions | SEC-10, NFR-5 | WI-05 | done |
-| WI-07 | Install config, role profiles and admission | RUN-6, AGT-7, NFR-2, SEC-1, CON-9, CON-5 | WI-03 | todo |
+| WI-07 | Install config, role profiles and admission | RUN-6, AGT-7, NFR-2, SEC-1, CON-9, CON-5 | WI-03 | done |
+| WI-07a | Install validation hardening (forge hosts, floating versions, loopback aliases) | SEC-1, AGT-7 | WI-07 | todo |
 
 - **WI-01** `internal/pathglob`: anchored globs (`*`, `?`, `**`), strict syntax, matching, and a conservative
   containment proof that fails closed. See [design/contracts.md](design/contracts.md).
@@ -77,6 +78,7 @@ lands. Design notes for larger items live in [docs/design/](design/).
   From WI-06: supply `authz.Config` (`Forge`, `InstallID`, per-operation `Expiry` with none as the default, `DenialAuditTimeout`). Define the install's admin principals by forge and stable ID, never by login, and who may change that list. Decide whether install-config changes go through authz (the PRD names "admin" in SEC-6 but only "Enterprise IT" in the roles table).
   From WI-03: supply `contract.Baseline` (mandatory gates, `Reviewers`, `PRReviewer` distinct from `SecurityReviewer`, `KnownAgents`, `Protected` patterns such as `.github/workflows/**` and `CODEOWNERS`) and `contract.Defaults` (each at least 1). `Compile` validates them, but install-time validation should report errors earlier and more clearly.
   From WI-04: back contract.GateRegistry from install config (registered {producerId, workflowId, workflowRevision, checkId}; no empty fields; 40/64 lowercase hex). Any change to the baseline, defaults, KnownAgents or the registry triggers a full Compile plus CheckGates across every managed repo and reports failures without silently deactivating. Replace the CLI's interim defaults in cmd/factory/contract.go (baseline(), defaults()) with --install so they can't drift.
+- **WI-07a** WI-07 follow-up (no critical findings). Forge-host suffix matching (github.com, githubusercontent.com, githubcopilot.com, ghe.com, github.ai, ghcr.io, and forgeHosts with their subdomains); GitHub IP ranges, or a WI-30 note. More floating words (insiders, prerelease, pre, development, devel, unreleased, wip, newest, recent, previous, last, prod, production, live; glued forms like nightly2025; `/` in versions). Model-name false positives (qwen3-next-80b, flux.1-dev, stable-code-3b, …-preview-tts). More loopback aliases (host.containers.internal and similar).
 
 ## Phase 2: forge boundary and control-plane state
 
@@ -126,6 +128,7 @@ lands. Design notes for larger items live in [docs/design/](design/).
   - Serialize the denial auditor's chain with the transactional one, or keep them on separate chains.
   - Rate-limit before `Authorize`, and never echo `DeniedError.Reason` back to the caller.
   From WI-08: map GetComment/GetReview re-reads to Integrity at execution time. EditUnknown, edited and deleted all deny. Check that Comment.Repo/Issue match the subject. Key issues by NodeID. ErrIncomplete and RateLimitError mean block and retry, never a partial result.
+  From WI-07: implement install activation. It needs `quorum` granted OpActivateInstall decisions from distinct principals, taken only from the active revision's RoleSource, and consumed together with a compare-and-swap of the active generation in one transaction. Target.Revision = install.ActivationRevision(installID, activeGeneration, candidateCommit). Bootstrap happens once; refuse a second. Read the install config only via install.Load at a full SHA, refuse an empty InstallRevision on any production path, and store the install revision with every decision and evidence row. The quorum helper counts distinct principals, never grants; authz.Grant has no Principal field, so carry it alongside. Denial tests: the same approver twice; a member only of the candidate revision; a bot.
 - **WI-11** Activation of a contract revision requires approval of that exact revision by a current owner,
   under the previously trusted ownership and gate rules. A product change can never supply the policy that
   authorizes it (CON-2). Protected paths (contracts, CI definitions, CODEOWNERS) fail a product PR, and a protected
@@ -136,6 +139,7 @@ lands. Design notes for larger items live in [docs/design/](design/).
   From WI-03: protected-path classification already exists (`PathPolicy.Protected`; contract files and `Baseline.Protected` are always Forbidden). Reuse it; don't build a second matcher. Bind activation to `Effective.Revision`.
   From WI-04: validate a contract proposal with ValidateChanged plus the registry in one call, bound to the proposal revision. Derive changedDirs from the forge diff between the trusted and proposal revisions, never from the PR text: added, edited, deleted and renamed contracts, both sides of a rename. Pass dirs, not file paths. Misnamed, case-variant and symlinked contract files block. Assert the diff covers every contract file that differs. Store Scope.Checked and the registry answers with the activation decision for audit. derive Changed by comparing each contract file's digest against the trusted set, not only from the forge file list, which can be truncated. Include the old path of every rename. Always run a full Compile (about 2 s worst case) before activating anything. Incremental validation is for PR feedback only (WI-04a).
   From WI-09: build the owner RoleSource from codeowners.Load at the previously trusted base SHA, never the proposal head. Take that SHA from the protected default ref, never from the PR payload's base (GitHub serves fork commits by SHA). A Load error (ParseError, ErrSymlink, ErrTooLarge, ErrIncomplete) denies; never fall back. Record File.Revision() and File.Path() in the activation audit. RoleContractOwner checks the contract file paths being activated, which matches what GitHub's own code-owner review enforces (authz.md). Use one Target per owner area. Tests: a proposal that edits or adds .github/CODEOWNERS to make the approver an owner is denied; a repo A RoleSource never authorizes in repo B.
+  From WI-07: activating a new install revision runs a full Compile plus CheckGates across every managed repo and reports failures without deactivating anything. Bind contract activation evidence to Effective.Revision plus Effective.InstallRevision.
 - **WI-12** `internal/forge/github`: go-github implementation of WI-08, GitHub App auth, issue types, Checks
   publishing and the merge queue. Contract tests run the same suite against the fake and against recorded fixtures.
   From WI-08: implement forgetest.Harness over recorded fixtures. Tests: url.PathEscape of identity values; an invalid tree name means Tree errors; modes 120000/160000; Compare beyond 3000 files and truncated trees are recovered or give ErrIncomplete. JobExecution.Provenance is Complete only when every field, including reusable-workflow repo/commit, came from the API.
@@ -227,6 +231,7 @@ lands. Design notes for larger items live in [docs/design/](design/).
 - **WI-26** Release defaults, all-on, all-off and the exact proposed configuration, with shared evidence for identical
   configurations (PIP-5). Daily cadence, root-contract override, a floor of twice the last run time, and skipping empty
   trains (PIP-11). Serialize overlapping hand-written files and shared non-switchable artifacts, both at plan time and per diff (PIP-10).
+  From WI-07: add a train cadence field to the install schema (PIP-11).
 - **WI-27** Qualify the replacement manifest before ejecting (REC-1). Unflagged work recovers through a verified
   inverse or an eligible source revision (REC-2). Inverse repairs are capped (REC-3). Stop the train and page the owner when
   recovery can't produce a passing candidate (REC-4).
@@ -246,18 +251,22 @@ lands. Design notes for larger items live in [docs/design/](design/).
   AGT-6 completeness lives here and in WI-30/31: every tool call (MCP via agentgateway), model call and repo write emits
   one audit entry with the session's workload identity and its change subject once the change exists. Test it with a fake
   session that makes one of each and asserts exactly three entries.
+  From WI-07: call Config.Admit right before scheduling every session, and treat any non-nil result as a denial. Audit role, tuple digest, record digest and install revision. Launch exactly the Role() profile, and refuse a running image that differs from it. Build a content-addressed QualificationStore over the offline bundle.
 - **WI-29** Templates, harnesses and the install manifest live in git, pinned by digest. Validate against an
   offline mirror (RUN-1). Preflight names each unmet prerequisite (RUN-9). A BOM covers every component (NFR-8).
+  From WI-07: resolve and verify deploymentManifest and every profile digest against the offline mirror. Preflight runs Admit for every enabled role (RUN-9). Put the install revision and qualification records in the BOM (NFR-8).
 - **WI-30** agentgateway deny-by-default egress per role, with blocked calls logged (RUN-3). Credentials are injected at egress,
   and a secret scan of a running sandbox finds none (RUN-4). No agent token can merge or push to protected branches (SEC-2).
   Reviewers are read-only (SEC-3).
   From WI-08: enforce PushPolicy on the real write path. Coder credentials never carry the `workflows` scope. Evaluate the deny paths over the diff from the trusted base, never over the listed paths, and require descent from that base. The trusted base must be the base branch head or reachable from it. Push-triggered workflows on `factory/*` with secrets need CI-side controls.
+  From WI-07: enforce egress exactly as Role().Egress.Hosts. Inject gateway credentials only for their exact host and METHOD /path, and never percent-decode. Deny at the gateway any hostname that resolves to link-local, loopback or unspecified addresses. Define a closed tool-permission vocabulary and reject write or merge permissions on reviewer roles (SEC-3) and on protected branches (SEC-2).
 - **WI-31** Bare-mode Claude Code and factory-supplied Codex config. A fixture checkout plants hooks, MCP config and
   settings, and the test asserts none of them load (SEC-9). Inner-loop results are never gate results (AGT-1). A recipe is
   accepted only after it reproduces a green CI result, with CI as the fallback (AGT-8).
 - **WI-32** Templates for the v1 roles (AGD-1). Pinned profiles per role (AGT-7). A qualification suite with
   positive and negative fixtures per role (NFR-2). Rubber-duck refinement (INT-2) and the onboarder's draft (CON-10).
   From WI-09: CODEOWNERS parsing fails closed, so one bad line removes every owner. The onboarder must report CODEOWNERS parse errors as a blocker.
+  From WI-07: decide whether qualification records expire and which suiteRevisions are acceptable. Write positive and negative fixtures per role. Use installtest.NewSigner. When the catalog names the coding role, require the two baseline reviewer roles to be distinct from it (AGD-3 independence, AGT-2).
 
 ## Phase 7: cost, operations and security regression
 
@@ -270,13 +279,16 @@ lands. Design notes for larger items live in [docs/design/](design/).
 | WI-37 | Security regression suite | SEC-11 | WI-06, WI-13, WI-21, WI-24, WI-36 | todo |
 
 - **WI-33** Over-quota work queues and doesn't start (COST-2). A per-PR hourly cap on gate-of-record runs (COST-3).
+  From WI-07: charge quotas by stable team ID, with DefaultTeam for unlisted teams and CI runs counted per (repo ID, PR). Define which team a change charges. Queue work over quota, and use an injected clock. Test with non-default parsed values.
 - **WI-34** Stop after N consecutive failures of the same gate (COST-4). Stop after 5 iterations with no newly passing gate,
   or spend past 5× the estimate (COST-7).
+  From WI-07 (applies to WI-15, WI-20, WI-24 and WI-27 too): read Timers() from a parsed config. Tests must use non-default values. SpendOverEstimateFactor is an integer.
 - **WI-35** Estimated versus actual cost on the issue, notifying without pausing (COST-1). Tokens, GPU time and CI
   minutes per feature, including failed attempts. Team and train totals reconcile (COST-5).
 - **WI-36** Only a current admin halts or resumes. A halt fences sessions, queued actions and merges. A resume
   binds to the halt revision, and replays are denied and logged.
   From WI-06: use `OpHalt` and `OpResume` (role admin, install scope, subject = InstallID). The halt generation is a unique digest, so a resume for H1 that arrives after H2 is stale. Define what a halt binds to. Tests: a revoked former admin is denied for both halt and resume, and a replayed resume is denied and logged.
+  From WI-07: admins come only from the active revision's RoleSource, built per execution. "Revoked" means removed in a newly activated revision. Test: an admin halts at revision 1, is removed at revision 2, and their resume is denied.
 - **WI-37** One integration suite on every control-plane change. It denies a forged approval, a stale owner
   approval, an unauthorized resume, a same-name foreign check and coder access to a private fixture, finds no leak
   in published Acceptance output, and lets a matching authorized approval succeed.

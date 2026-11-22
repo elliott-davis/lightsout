@@ -141,7 +141,10 @@ type PathPolicy struct {
 // it touches (CON-3).
 type Effective struct {
 	Revision string
-	Paths    []PathPolicy // sorted by path, without duplicates
+	// InstallRevision is the install config revision of the baseline the contracts
+	// were resolved under. Evidence binds to both revisions.
+	InstallRevision string
+	Paths           []PathPolicy // sorted by path, without duplicates
 	// Stacks are the distinct stacks of the touched paths, root-most first.
 	// Each path's StackIndex points into it.
 	Stacks    []StackPolicy
@@ -314,7 +317,7 @@ func (p *Policy) Resolve(paths []string) (*Effective, error) {
 	uniq := slices.Clone(paths)
 	slices.Sort(uniq)
 	uniq = slices.Compact(uniq)
-	eff := &Effective{Revision: p.revision, SecurityReviewer: p.base.SecurityReviewer, Paths: make([]PathPolicy, 0, len(uniq))}
+	eff := &Effective{Revision: p.revision, InstallRevision: p.base.InstallRevision, SecurityReviewer: p.base.SecurityReviewer, Paths: make([]PathPolicy, 0, len(uniq))}
 	datas := make([]*stackData, 0, len(uniq))
 	distinct := map[*stackData]bool{}
 	for _, path := range uniq {

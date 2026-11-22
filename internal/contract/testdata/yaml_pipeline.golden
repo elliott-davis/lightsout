@@ -1,0 +1,138 @@
+== alias
+problem ".factory.yaml" "/paths/writable" "unsafe-yaml" "4:13: anchors are not allowed"
+== alias key
+problem ".factory.yaml" "/a" "unsafe-yaml" "3:4: anchors are not allowed"
+== anchor on key
+problem ".factory.yaml" "" "unsafe-yaml" "3:1: anchors are not allowed"
+== anchor only
+problem ".factory.yaml" "/paths/writable" "unsafe-yaml" "4:13: anchors are not allowed"
+== bad bool
+problem ".factory.yaml" "/lightsOn" "schema" "got string, want boolean"
+== binary
+problem ".factory.yaml" "/paths/writable/0" "unsafe-yaml" "4:14: tag \"!!binary\" is not allowed, quote the value"
+== bool
+ok {"apiVersion":"factory/v1alpha1","kind":"Contract","paths":{},"gates":{},"agents":{},"lightsOn":true,"overrides":{}}
+== bool key
+problem ".factory.yaml" "" "unsafe-yaml" "3:1: mapping key \"true\" must be a string, quote it"
+== broken second
+problem ".factory.yaml" "" "syntax" "yaml: line 4: did not find expected node content"
+== broken syntax
+problem ".factory.yaml" "" "syntax" "yaml: line 1: did not find expected node content"
+== comment only
+problem ".factory.yaml" "" "syntax" "contract is empty"
+== complex key
+problem ".factory.yaml" "" "unsafe-yaml" "3:3: mapping keys must be plain strings"
+== custom tag
+problem ".factory.yaml" "/lightsOn" "unsafe-yaml" "3:11: tag \"!custom\" is not allowed, quote the value"
+== deep ok
+problem ".factory.yaml" "/overrides/x" "unknown-field" "unknown field \"x\""
+== duplicate key
+problem ".factory.yaml" "" "unsafe-yaml" "4:1: duplicate key \"lightsOn\""
+== explicit int tag
+ok {"apiVersion":"factory/v1alpha1","kind":"Contract","paths":{},"gates":{},"agents":{},"overrides":{"switchStaleDays":5}}
+== explicit str tag
+ok {"apiVersion":"factory/v1alpha1","kind":"Contract","paths":{"writable":["5"]},"gates":{},"agents":{},"overrides":{}}
+== exponent
+problem ".factory.yaml" "/overrides/switchStaleDays" "schema" "4:20: use an integer"
+== fixture anchors.yaml
+problem ".factory.yaml" "/paths/writable" "unsafe-yaml" "4:13: anchors are not allowed"
+== fixture minimal.yaml
+ok {"apiVersion":"factory/v1alpha1","kind":"Contract","paths":{"writable":[]},"gates":{},"agents":{},"lightsOn":true,"overrides":{}}
+== fixture prd-example.yaml
+ok {"apiVersion":"factory/v1alpha1","kind":"Contract","paths":{"writable":["**"],"readOnly":["api/protos/**"],"forbidden":["deploy/**"],"sensitive":["src/checkout/payment/**"],"generated":["gen/**"]},"gates":{"verify":[{"name":"build-and-test","producerId":"github-app:12345","workflowId":"67890","workflowRevision":"a4ac7e7ccc7544f12d78ba75fd84289a903511f3","checkId":"build-and-test","mandatory":true},{"name":"lint","producerId":"github-app:12345","workflowId":"67890","workflowRevision":"a4ac7e7ccc7544f12d78ba75fd84289a903511f3","checkId":"lint","mandatory":false}],"darkMergeOracle":{"producerId":"github-app:12345","workflowId":"67890","workflowRevision":"a4ac7e7ccc7544f12d78ba75fd84289a903511f3","checkId":"checkout-contract","observables":["responses","reads","writes","events","queued-jobs"]}},"agents":{"verify":["security-reviewer"]},"lightsOn":false,"overrides":{"switchStaleDays":45,"reviewBudgetLines":300}}
+== fixture unknown-command.yaml
+problem ".factory.yaml" "/gates/verify/0" "schema" "missing properties 'producerId', 'workflowId', 'workflowRevision', 'checkId', 'mandatory'"
+problem ".factory.yaml" "/gates/verify/0/command" "unknown-field" "unknown field \"command\""
+== float
+problem ".factory.yaml" "/overrides/switchStaleDays" "schema" "4:20: use an integer"
+== flow map
+ok {"apiVersion":"factory/v1alpha1","kind":"Contract","paths":{},"gates":{},"agents":{},"overrides":{"switchStaleDays":3}}
+== folded scalar
+problem ".factory.yaml" "/paths/writable/0" "schema" "'a b\\\\n' does not match pattern '^[\\\\\\\\x20-\\\\\\\\x2e\\\\\\\\x30-\\\\\\\\x5a\\\\\\\\x5e-\\\\\\\\x7a\\\\\\\\x7c\\\\\\\\x7e][\\\\\\\\x20-\\\\\\\\x5a\\\\\\\\x5e-\\\\\\\\x7a\\\\\\\\x7c\\\\\\\\x7e]*$'"
+== hash key
+problem ".factory.yaml" "/a\\x23b" "unknown-field" "unknown field \"a\\x23b\""
+== hex int
+problem ".factory.yaml" "/overrides/switchStaleDays" "schema" "4:20: write integers in plain decimal"
+== huge int
+problem ".factory.yaml" "/overrides/switchStaleDays" "schema" "4:20: use an integer"
+== int key
+problem ".factory.yaml" "" "unsafe-yaml" "3:1: mapping key \"1\" must be a string, quote it"
+== invalid utf8
+problem ".factory.yaml" "" "unsafe-yaml" "contracts must be UTF-8 without a byte-order mark"
+== leading zero
+problem ".factory.yaml" "/overrides/reviewBudgetLines" "schema" "4:22: write integers in plain decimal"
+== long key
+problem ".factory.yaml" "/kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk…" "unknown-field" "unknown field \"kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk...\""
+== map tag
+problem ".factory.yaml" "/overrides" "unsafe-yaml" "3:12: tag \"!custom\" is not allowed"
+== max int digits
+problem ".factory.yaml" "/overrides/switchStaleDays" "schema" "4:20: use an integer"
+== merge key
+problem ".factory.yaml" "/overrides" "unsafe-yaml" "4:3: merge keys are not allowed"
+== minimal
+ok {"apiVersion":"factory/v1alpha1","kind":"Contract","paths":{},"gates":{},"agents":{},"overrides":{}}
+== nan float
+problem ".factory.yaml" "/overrides/switchStaleDays" "schema" "4:20: use an integer"
+== negative
+problem ".factory.yaml" "/overrides/switchStaleDays" "schema" "minimum: got -5, want 1"
+== nested dup
+problem ".factory.yaml" "/gates" "unsafe-yaml" "5:3: duplicate key \"verify\""
+== nested list
+problem ".factory.yaml" "/gates/verify/0" "schema" "got array, want object"
+problem ".factory.yaml" "/gates/verify/1" "schema" "got array, want object"
+== nul
+problem ".factory.yaml" "" "unsafe-yaml" "contracts must be UTF-8 without a byte-order mark"
+== null key
+problem ".factory.yaml" "" "unsafe-yaml" "3:1: mapping key \"~\" must be a string, quote it"
+== null value
+problem ".factory.yaml" "/lightsOn" "schema" "got null, want boolean"
+== octal
+problem ".factory.yaml" "/overrides/reviewBudgetLines" "schema" "4:22: write integers in plain decimal"
+== oversize
+problem ".factory.yaml" "" "too-large" "contract is 65582 bytes, limit is 65536"
+== plus
+problem ".factory.yaml" "/overrides/switchStaleDays" "schema" "4:20: write integers in plain decimal"
+== quoted merge
+problem ".factory.yaml" "/overrides/<<" "unknown-field" "unknown field \"<<\""
+== quoted number
+ok {"apiVersion":"factory/v1alpha1","kind":"Contract","paths":{"writable":["1","2"]},"gates":{},"agents":{},"overrides":{}}
+== second doc
+problem ".factory.yaml" "" "unsafe-yaml" "3:1: multiple YAML documents are not allowed"
+== seq tag
+problem ".factory.yaml" "/paths/writable" "unsafe-yaml" "4:13: tag \"!custom\" is not allowed"
+== set tag
+problem ".factory.yaml" "/x" "unsafe-yaml" "3:4: tag \"!!set\" is not allowed"
+== slash key
+problem ".factory.yaml" "/a~1b~0c" "unknown-field" "unknown field \"a/b~c\""
+== tab indent
+problem ".factory.yaml" "" "syntax" "yaml: line 2: found character that cannot start any token"
+== third doc
+problem ".factory.yaml" "" "unsafe-yaml" "3:1: multiple YAML documents are not allowed"
+== timestamp
+problem ".factory.yaml" "/paths/writable/0" "unsafe-yaml" "4:14: timestamp \"2001-12-14\" is not allowed, quote the value"
+== too deep
+problem ".factory.yaml" "/overrides/x/0/0/0/0/0/0/0/0/0/0/0/0/0/0" "unsafe-yaml" "4:20: document is nested deeper than 16 levels"
+== too many nodes
+problem ".factory.yaml" "/paths/writable/9991" "unsafe-yaml" "4:29987: document has more than 10000 nodes"
+== top list
+problem ".factory.yaml" "" "schema" "1:1: the top level must be a mapping"
+== top null
+problem ".factory.yaml" "" "schema" "1:1: the top level must be a mapping"
+== top scalar
+problem ".factory.yaml" "" "schema" "1:1: the top level must be a mapping"
+== underscore
+problem ".factory.yaml" "/overrides/reviewBudgetLines" "schema" "4:22: write integers in plain decimal"
+== unicode
+problem ".factory.yaml" "/paths/writable/0" "schema" "'café/\\\\u202e\\x23x' does not match pattern '^[\\\\\\\\x20-\\\\\\\\x2e\\\\\\\\x30-\\\\\\\\x5a\\\\\\\\x5e-\\\\\\\\x7a\\\\\\\\x7c\\\\\\\\x7e][\\\\\\\\x20-\\\\\\\\x5a\\\\\\\\x5e-\\\\\\\\x7a\\\\\\\\x7c\\\\\\\\x7e]*$'"
+== utf16be bom
+problem ".factory.yaml" "" "unsafe-yaml" "contracts must be UTF-8 without a byte-order mark"
+== utf16le bom
+problem ".factory.yaml" "" "unsafe-yaml" "contracts must be UTF-8 without a byte-order mark"
+== utf16le no bom
+problem ".factory.yaml" "" "unsafe-yaml" "contracts must be UTF-8 without a byte-order mark"
+== utf32be bom
+problem ".factory.yaml" "" "unsafe-yaml" "contracts must be UTF-8 without a byte-order mark"
+== utf8 bom
+problem ".factory.yaml" "" "unsafe-yaml" "contracts must be UTF-8 without a byte-order mark"
+== whitespace
+problem ".factory.yaml" "" "syntax" "yaml: line 2: found character that cannot start any token"

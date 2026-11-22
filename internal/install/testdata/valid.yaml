@@ -1,0 +1,100 @@
+apiVersion: factory/v1alpha1
+kind: Install
+installation: { id: "inst-1", forge: github }
+deploymentManifest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+policyApprovers:
+  quorum: 2
+  members: [{ forge: github, id: "111" }, { forge: github, id: "222" }]
+admins:
+  - { forge: github, id: "12345" }
+timers:
+  reviewRounds: 3
+  sameGateFailures: 3
+quotas:
+  teams: [{ teamId: "github:team:9876", agentSessions: 4, ciRuns: 8 }]
+  defaultTeam: { agentSessions: 2, ciRuns: 4 }
+  ciRunsPerPRPerHour: 6
+contractDefaults: { switchStaleDays: 30, switchAbandonedDays: 30, reviewBudgetLines: 300 }
+baseline:
+  verify:
+    - purpose: secret-scan
+      name: secret-scan
+      producerId: "github-app:15368"
+      workflowId: "secret-scan.yml"
+      workflowRevision: "a4ac7e7ccc7544f12d78ba75fd84289a903511f3"
+      checkId: "secret-scan"
+      mandatory: true
+    - purpose: dependency-scan
+      name: dep-scan
+      producerId: "github-app:15368"
+      workflowId: "dep-scan.yml"
+      workflowRevision: "a4ac7e7ccc7544f12d78ba75fd84289a903511f3"
+      checkId: "dep-scan"
+      mandatory: true
+  union: []
+  reviewers: { pr: pr-reviewer, security: security-reviewer }
+  knownAgents: [payments-specialist]
+  protected:
+    - ".github/workflows/**"
+    - ".github/actions/**"
+    - ".github/CODEOWNERS"
+    - "CODEOWNERS"
+    - "docs/CODEOWNERS"
+gateRegistry:
+  - { producerId: "github-app:15368", workflowId: "secret-scan.yml", workflowRevision: "a4ac7e7ccc7544f12d78ba75fd84289a903511f3", checkId: "secret-scan" }
+  - { producerId: "github-app:15368", workflowId: "dep-scan.yml", workflowRevision: "a4ac7e7ccc7544f12d78ba75fd84289a903511f3", checkId: "dep-scan" }
+  - { producerId: "github-app:15368", workflowId: "ci.yml", workflowRevision: "b5bd8f8dddd655f23ba89be95fe5390ba14622f4", checkId: "unit" }
+decisions: { expiry: { halt: 3600 }, denialAuditTimeoutSeconds: 5 }
+qualifierKeys:
+  - { id: q1, key: "Jjh2D/UDuh57Hf+ms/+Az72RO1cca9+NuH+XkwJUMUQ=" }
+roles:
+  coder:
+    profile:
+      template: { digest: "sha256:1111111111111111111111111111111111111111111111111111111111111111" }
+      runtime: { image: "registry.internal/agent@sha256:2222222222222222222222222222222222222222222222222222222222222222" }
+      harness: { name: claude-code, version: "2.1.0", digest: "sha256:3333333333333333333333333333333333333333333333333333333333333333" }
+      model: { name: "model-a", revision: "2026-10-01" }
+      endpoint: { digest: "sha256:4444444444444444444444444444444444444444444444444444444444444444" }
+      tools:
+        - { name: git, version: "2.47.0", permissions: ["repo:read", "branch:push-own"] }
+        - { name: go, version: "1.27", permissions: ["repo:read"] }
+    egress: { hosts: ["models.internal:443"] }
+    gatewayCredentials:
+      - { name: model-key, host: "models.internal:443", operations: ["POST /v1/messages"] }
+    sandboxSecrets: []
+    qualification: "sha256:5533678f7d96a2b6abdd023c00dd2058083a299db4505e9185e7cb7d18961359"
+  pr-reviewer:
+    profile:
+      template: { digest: "sha256:5555555555555555555555555555555555555555555555555555555555555555" }
+      runtime: { image: "registry.internal/agent@sha256:2222222222222222222222222222222222222222222222222222222222222222" }
+      harness: { name: claude-code, version: "2.1.0", digest: "sha256:3333333333333333333333333333333333333333333333333333333333333333" }
+      model: { name: "model-a", revision: "2026-10-01" }
+      endpoint: { digest: "sha256:4444444444444444444444444444444444444444444444444444444444444444" }
+      tools:
+        - { name: git, version: "2.47.0", permissions: ["repo:read"] }
+    egress: { hosts: ["models.internal:443"] }
+    gatewayCredentials:
+      - { name: model-key, host: "models.internal:443", operations: ["POST /v1/messages"] }
+    qualification: "sha256:064961cfa862f8f97b7faf20defa0799a7c954c26f18002a57caa483f0165ed7"
+  security-reviewer:
+    profile:
+      template: { digest: "sha256:6666666666666666666666666666666666666666666666666666666666666666" }
+      runtime: { image: "registry.internal/agent@sha256:2222222222222222222222222222222222222222222222222222222222222222" }
+      harness: { name: claude-code, version: "2.1.0", digest: "sha256:3333333333333333333333333333333333333333333333333333333333333333" }
+      model: { name: "model-a", revision: "2026-10-01" }
+      endpoint: { digest: "sha256:4444444444444444444444444444444444444444444444444444444444444444" }
+      tools:
+        - { name: git, version: "2.47.0", permissions: ["repo:read"] }
+    egress: { hosts: ["models.internal:443"] }
+    qualification: "sha256:2769a71945869fa7d5901c635d0186eff53a70e2bf6bb64943a3dfffab4a7780"
+  payments-specialist:
+    profile:
+      template: { digest: "sha256:7777777777777777777777777777777777777777777777777777777777777777" }
+      runtime: { image: "registry.internal/agent@sha256:2222222222222222222222222222222222222222222222222222222222222222" }
+      harness: { name: claude-code, version: "2.1.0", digest: "sha256:3333333333333333333333333333333333333333333333333333333333333333" }
+      model: { name: "model-a", revision: "2026-10-01" }
+      endpoint: { digest: "sha256:4444444444444444444444444444444444444444444444444444444444444444" }
+      tools:
+        - { name: git, version: "2.47.0", permissions: ["repo:read", "pulls:review"] }
+    egress: { hosts: ["models.internal:443"] }
+    qualification: "sha256:39d4f939e18c53b78782cdeaf04f25d4142df7750e637bfa53a8de08df7e6c5b"

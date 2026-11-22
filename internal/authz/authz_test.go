@@ -236,7 +236,7 @@ func (e *env) authorize(t *testing.T, d Decision, tg Target) (Grant, error) {
 
 // allRoles gives principal 42 every role.
 func (e *env) allRoles() {
-	for _, r := range []Role{RoleIdeator, RolePathOwner, RoleCodeOwner, RoleContractOwner, RoleAdmin} {
+	for _, r := range []Role{RoleIdeator, RolePathOwner, RoleCodeOwner, RoleContractOwner, RoleAdmin, RolePolicyApprover} {
 		e.roles.set(r, true)
 	}
 }
@@ -292,6 +292,7 @@ func TestOperations_Table(t *testing.T) { // SEC-10, SEC-6, INT-3, INT-4, INT-11
 		"approve-path-exception": {Role: "path-owner", ScopeKind: "repo", Subjects: change, Area: true},
 		"approve-lights-on":      {Role: "code-owner", ScopeKind: "repo", Subjects: change, Area: true},
 		"activate-contract":      {Role: "contract-owner", ScopeKind: "repo", Subjects: change, Area: true},
+		"activate-install":       {Role: "policy-approver", ScopeKind: "install", Subjects: install},
 		"halt":                   {Role: "admin", ScopeKind: "install", Subjects: install},
 		"resume":                 {Role: "admin", ScopeKind: "install", Subjects: install},
 	}
@@ -392,6 +393,7 @@ func TestAuthorize_GrantRecords(t *testing.T) { // SEC-6, SEC-10, CON-2, CON-7
 		"resume":                 {OpResume, "admin", revB, false, ""},
 		"approve-path-exception": {OpApprovePathException, "path-owner", sha1A, true, ""},
 		"activate-contract":      {OpActivateContract, "contract-owner", revA, true, ""},
+		"activate-install":       {OpActivateInstall, "policy-approver", revB, false, ""},
 		"decide-split":           {OpDecideSplit, "ideator", revA, false, choiceA},
 	}
 	for name, tc := range tests {
@@ -535,6 +537,10 @@ func TestAuthorize_Denials(t *testing.T) { // SEC-10, SEC-11
 		"integrity: unknown (zero)":            {mutate: func(d *Decision, _ *Target) { d.Integrity = IntegrityUnknown }, want: ReasonMalformed},
 		"integrity: out of range":              {mutate: func(d *Decision, _ *Target) { d.Integrity = 99 }, want: ReasonMalformed},
 		"created in future":                    {mutate: func(d *Decision, _ *Target) { d.Created = t0.Add(2 * time.Minute) }, want: ReasonMalformed},
+		"activate-install: stale generation":   {op: OpActivateInstall, mutate: func(d *Decision, _ *Target) { d.Revision = revB }, want: ReasonStale}, // revision of generation 6, target generation 7
+		"activate-install: candidate swapped":  {op: OpActivateInstall, mutate: func(_ *Decision, tg *Target) { tg.Revision = revB }, want: ReasonStale},
+		"activate-install: foreign install":    {op: OpActivateInstall, mutate: func(d *Decision, tg *Target) { foreignInstall(d, tg) }, want: ReasonWrongPlace},
+		"activate-install: not an approver":    {op: OpActivateInstall, mutate: func(d *Decision, _ *Target) { d.Principal.ID = "99" }, want: ReasonNoRole},
 		"older revision":                       {mutate: func(d *Decision, _ *Target) { d.Revision = revB }, want: ReasonStale},
 		"proposal edited":                      {mutate: func(_ *Decision, tg *Target) { tg.Revision = revB }, want: ReasonStale},
 		"sha-1 vs sha-256 of same":             {mutate: func(d *Decision, _ *Target) { d.Revision = revA[:40] }, want: ReasonStale},
@@ -709,7 +715,7 @@ func TestAuthorize_NoRoleStaysUnconsumed(t *testing.T) { // SEC-10
 
 func TestAuthorize_EachOpRequiresItsRole(t *testing.T) { // SEC-10, SEC-6
 	t.Parallel()
-	allRoles := []Role{RoleIdeator, RolePathOwner, RoleCodeOwner, RoleContractOwner, RoleAdmin}
+	allRoles := []Role{RoleIdeator, RolePathOwner, RoleCodeOwner, RoleContractOwner, RoleAdmin, RolePolicyApprover}
 	for op, pol := range operations() {
 		t.Run(string(op), func(t *testing.T) {
 			t.Parallel()
@@ -1458,5 +1464,33 @@ func TestAuthorize_DenialClipBoundaries(t *testing.T) { // SEC-10: every denial 
 				t.Errorf("subject not clipped: %d bytes", n)
 			}
 		})
+	}
+}
+
+func TestOperations_ListIsComplete(t *testing.T) { // RUN-1
+	t.Parallel()
+	got := Operations()
+	if len(got) != len(operations()) || !slices.IsSorted(got) {
+		t.Errorf("Operations() = %v, want every operation, sorted", got)
+	}
+	if !slices.Contains(got, OpActivateInstall) {
+		t.Error("Operations() lacks activate-install")
+	}
+}
+
+func TestAuthorize_ActivateInstallRevokedApprover(t *testing.T) { // RUN-1, SEC-10
+	t.Parallel()
+	e := newEnv(t, Config{})
+	d, tg := caseFor(OpActivateInstall)
+	e.roles.set(RolePolicyApprover, false) // revoked between the decision and its execution
+	_, err := e.authorize(t, d, tg)
+	wantDenied(t, err, ReasonNoRole)
+	// An admin is not an approver, whatever else they hold.
+	e.roles.set(RoleAdmin, true)
+	_, err = e.authorize(t, d, tg)
+	wantDenied(t, err, ReasonNoRole)
+	e.roles.set(RolePolicyApprover, true)
+	if _, err := e.authorize(t, d, tg); err != nil {
+		t.Errorf("a current approver: %v", err)
 	}
 }

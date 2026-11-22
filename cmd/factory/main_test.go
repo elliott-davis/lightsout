@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"unicode"
@@ -105,7 +106,27 @@ func looseningTree(t *testing.T) string {
 	})
 }
 
+// installRev is the install revision runCLI supplies with --install.
+const installRev = "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4"
+
+// runCLI runs the CLI. For a contract validate, explain or trust-digest it adds --interim-defaults when neither
+// --install nor --interim-defaults is given, and --install-revision when --install is given without one, so tests
+// of those commands needn't repeat them. runCLIRaw runs the arguments exactly as given.
 func runCLI(t *testing.T, args ...string) (stdout, stderr string, err error) {
+	t.Helper()
+	if len(args) > 1 && args[0] == "contract" && (args[1] == "validate" || args[1] == "explain" || args[1] == "trust-digest") {
+		args = slices.Clone(args)
+		if !slices.Contains(args, "--install") && !slices.Contains(args, "--interim-defaults") {
+			args = slices.Insert(args, 2, "--interim-defaults")
+		}
+		if slices.Contains(args, "--install") && !slices.Contains(args, "--install-revision") {
+			args = slices.Insert(args, 2, "--install-revision", installRev)
+		}
+	}
+	return runCLIRaw(t, args...)
+}
+
+func runCLIRaw(t *testing.T, args ...string) (stdout, stderr string, err error) {
 	t.Helper()
 	var out, errOut bytes.Buffer
 	err = run(t.Context(), args, &out, &errOut)

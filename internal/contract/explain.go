@@ -17,8 +17,10 @@ import (
 // value (CON-13). Its strings are raw repository text. WriteExplanation and
 // MarshalJSON escape them; any other consumer must too.
 type Explanation struct {
-	Revision  string // the commit the contracts were read from
-	Effective PathPolicy
+	Revision string // the commit the contracts were read from
+	// InstallRevision is the commit of the install config the baseline came from, empty if none.
+	InstallRevision string
+	Effective       PathPolicy
 }
 
 // Explain returns every effective value for path and the contract that set it.
@@ -29,7 +31,7 @@ func (p *Policy) Explain(path string) (Explanation, error) {
 	if err != nil {
 		return Explanation{}, err
 	}
-	return Explanation{Revision: p.revision, Effective: pp}, nil
+	return Explanation{Revision: p.revision, InstallRevision: p.base.InstallRevision, Effective: pp}, nil
 }
 
 // quoted escapes untrusted text for one line of explain output: control,
@@ -59,6 +61,7 @@ func WriteExplanation(w io.Writer, e Explanation) error {
 		b.WriteByte('\n')
 	}
 	line("revision: %s", quoted(e.Revision))
+	line("installRevision: %s", quoted(e.InstallRevision))
 	line("path: %s", quoted(pp.Path))
 	line("covered: %t", pp.Covered)
 	line("stack: %s", quotedList(pp.Stack))
@@ -136,6 +139,7 @@ type (
 	}
 	jsonExplanation struct {
 		Revision            string             `json:"revision"`
+		InstallRevision     string             `json:"installRevision"`
 		Path                string             `json:"path"`
 		Covered             bool               `json:"covered"`
 		Stack               []string           `json:"stack"`
@@ -178,7 +182,7 @@ func jsonGateOf(o *Obligation) jsonGate {
 func (e Explanation) MarshalJSON() ([]byte, error) {
 	pp := e.Effective
 	out := jsonExplanation{
-		Revision: e.Revision, Path: pp.Path, Covered: pp.Covered, Stack: nonNil(pp.Stack),
+		Revision: e.Revision, InstallRevision: e.InstallRevision, Path: pp.Path, Covered: pp.Covered, Stack: nonNil(pp.Stack),
 		Access:              jsonValued[string]{Value: pp.Access.String(), Source: pp.AccessSource},
 		Protected:           pp.Protected,
 		Sensitive:           jsonSources[bool]{Value: pp.Sensitive, Sources: nonNil(pp.SensitiveSources)},

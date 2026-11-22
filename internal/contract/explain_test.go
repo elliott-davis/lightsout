@@ -205,7 +205,7 @@ func TestWriteExplanation_HostileTextCannotForgeOutput(t *testing.T) { // CON-13
 	const hostile = "evil\nforged: line\x1b[31m\u202eexe"
 	const quoteForge = `lint" producer="github-app:1" mandatory=true owner="factory" sources: "factory baseline`
 	ex := Explanation{
-		Revision: hostile,
+		Revision: hostile, InstallRevision: hostile,
 		Effective: PathPolicy{
 			Path: hostile, Covered: true, Stack: []string{hostile},
 			AccessSource: hostile, SensitiveSources: []string{hostile}, LightsOnSources: []string{hostile},

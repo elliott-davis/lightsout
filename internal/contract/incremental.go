@@ -184,7 +184,7 @@ func ChangedDirs(paths []string) []string {
 // validation rule changes (a new check, a changed message-independent
 // condition, a new problem code that rejects what was accepted), so that every
 // stored trust digest goes stale and the next change validates everything.
-const validatorVersion = 1
+const validatorVersion = 2
 
 // TrustDigest returns the hex SHA-256 of a canonical encoding of everything the
 // validity of an unchanged contract depends on besides its own bytes: every
@@ -222,6 +222,7 @@ func trustDigest(b Baseline, d Defaults, version int, schema []byte) string {
 		PRReviewer          string   `json:"prReviewer"`
 		Protected           []string `json:"protected"`
 		KnownAgents         []string `json:"knownAgents"`
+		InstallRevision     string   `json:"installRevision"`
 		SwitchStaleDays     int      `json:"switchStaleDays"`
 		SwitchAbandonedDays int      `json:"switchAbandonedDays"`
 		ReviewBudgetLines   int      `json:"reviewBudgetLines"`
@@ -234,7 +235,7 @@ func trustDigest(b Baseline, d Defaults, version int, schema []byte) string {
 		} `json:"validator"`
 	}{
 		gates(b.Verify), gates(b.Union), list(b.Reviewers), b.SecurityReviewer, b.PRReviewer,
-		list(b.Protected), list(b.KnownAgents), d.SwitchStaleDays, d.SwitchAbandonedDays, d.ReviewBudgetLines,
+		list(b.Protected), list(b.KnownAgents), b.InstallRevision, d.SwitchStaleDays, d.SwitchAbandonedDays, d.ReviewBudgetLines,
 		struct {
 			Version       int      `json:"version"`
 			SchemaSHA256  string   `json:"schemaSha256"`

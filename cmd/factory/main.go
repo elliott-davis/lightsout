@@ -39,19 +39,24 @@ func printError(w io.Writer, err error) {
 }
 
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
-	if len(args) > 0 && args[0] == "contract" {
-		return runContract(ctx, args[1:], stdout, stderr)
+	if len(args) > 0 {
+		switch args[0] {
+		case "contract":
+			return runContract(ctx, args[1:], stdout, stderr)
+		case "install":
+			return runInstall(ctx, args[1:], stdout, stderr)
+		}
 	}
 	fs := flag.NewFlagSet("factory", flag.ContinueOnError)
 	showVersion := fs.Bool("version", false, "print version and exit")
-	if err := parseFlags(fs, args, stderr, "usage: factory [--version] | contract <command>\n"); err != nil {
+	if err := parseFlags(fs, args, stderr, "usage: factory [--version] | contract <command> | install <command>\n"); err != nil {
 		return fmt.Errorf("parse flags: %w", err)
 	}
 	if *showVersion {
 		_, err := fmt.Fprintln(stdout, version.String())
 		return err
 	}
-	fmt.Fprintln(stderr, "usage: factory [--version] | contract <command>")
+	fmt.Fprintln(stderr, "usage: factory [--version] | contract <command> | install <command>")
 	fs.PrintDefaults()
 	return errUsage
 }

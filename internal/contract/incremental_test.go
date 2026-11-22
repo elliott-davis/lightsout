@@ -338,7 +338,7 @@ func TestChangedDirs(t *testing.T) { // CON-13
 
 // goldenTrustDigest pins the canonical encoding of testBaseline and
 // testDefaults. A change to it is a change to every stored trusted digest.
-const goldenTrustDigest = "6eb4df60fdf6b6d919c21f5ea31fab43cef69f3d416f2a1f7fe8b7278fbf6076"
+const goldenTrustDigest = "05b0b1b69fb763381f3322285dca02d244d294977ed034ef96b22a118251adc9"
 
 func TestTrustDigest(t *testing.T) { // CON-13
 	t.Parallel()
@@ -356,6 +356,7 @@ func TestTrustDigest(t *testing.T) { // CON-13
 		"pr reviewer":         func(b *Baseline, _ *Defaults) { b.PRReviewer = "security-reviewer" },
 		"protected":           func(b *Baseline, _ *Defaults) { b.Protected = []string{"CODEOWNERS"} },
 		"known agents":        func(b *Baseline, _ *Defaults) { b.KnownAgents = nil },
+		"install revision":    func(b *Baseline, _ *Defaults) { b.InstallRevision = otherRev },
 		"stale days":          func(_ *Baseline, d *Defaults) { d.SwitchStaleDays++ },
 		"abandoned days":      func(_ *Baseline, d *Defaults) { d.SwitchAbandonedDays++ },
 		"review budget lines": func(_ *Baseline, d *Defaults) { d.ReviewBudgetLines++ },

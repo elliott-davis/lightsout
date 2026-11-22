@@ -165,6 +165,17 @@ trusted base, and is never long-lived.
 Owner roles are checked per area. An action that spans several owner areas, such as activating a contract that touches two areas, needs one granted decision
 per area. WI-11 composes these and requires coverage of every affected area under the previously trusted ownership.
 
+### Install activation
+
+`OpActivateInstall` (`"activate-install"`) needs `RolePolicyApprover` (`"policy-approver"`), install scope and an install subject.
+`Target.Revision` is `install.ActivationRevision(installID, generation, candidate)`, which binds the installation, the active generation
+and the candidate commit (the encoding is in [install.md](install.md), "Activation operation"). A decision made for an earlier generation
+has a different revision, so WI-10 must compute the value from the store's current generation and thereby deny it. Authz checks one
+decision at a time and cannot count, so quorum is the caller's job (WI-10, WI-11): gather `quorum` granted decisions from distinct
+principals who are policy approvers of the *active* revision (`Config.RoleSource()` of the active config), each carrying the same
+`ActivationRevision`, and consume them with the compare-and-swap of the active generation in one transaction. A candidate's own
+`policyApprovers` never count.
+
 ## Tests (SEC-11 negatives)
 
 Fakes for RoleSource and Tx, and an in-memory audit log. Each check has a denial test, plus:

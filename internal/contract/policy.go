@@ -70,6 +70,12 @@ type Baseline struct {
 	// KnownAgents lists every agent name a contract may put under agents.verify.
 	// Reviewers are implicitly known.
 	KnownAgents []string
+	// InstallRevision is the commit of the install config this baseline came from:
+	// 40 or 64 lowercase hex digits, or empty in tests that build a baseline by
+	// hand. It is part of the policy identity: Effective carries it and the trust
+	// digest covers it, so changing a baseline gate can never leave the identity of
+	// the evidence unchanged.
+	InstallRevision string
 }
 
 // Defaults are the install-wide values that contracts override (CON-9). Each must be at least 1.
@@ -202,7 +208,13 @@ func (p *Policy) Revision() string { return p.revision }
 // agentName is the schema's pattern for an agent name (agents.verify items).
 var agentName = regexp.MustCompile(`^[a-z][a-z0-9-]{0,63}$`)
 
+// installRevision is the form of Baseline.InstallRevision: a full commit ID.
+var installRevision = regexp.MustCompile(`^([0-9a-f]{40}|[0-9a-f]{64})$`)
+
 func checkBaseline(parser *Parser, b Baseline) error {
+	if b.InstallRevision != "" && !installRevision.MatchString(b.InstallRevision) {
+		return fmt.Errorf("baseline install revision %s must be 40 or 64 lowercase hex digits", quote(b.InstallRevision))
+	}
 	// Hold the baseline's gates to the schema, like any contract's, by checking
 	// a synthetic contract that carries them.
 	synthetic := &Contract{

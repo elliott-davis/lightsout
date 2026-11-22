@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/elliott-davis/lightsout/internal/contract"
+	"github.com/elliott-davis/lightsout/internal/install"
 	"github.com/elliott-davis/lightsout/internal/pathglob"
 )
 
@@ -31,7 +32,12 @@ commands:
   schema                         print the contract JSON Schema
   validate [flags]               validate the contracts in a checkout
   explain [flags] <path>         show every effective value for a path and its source
-  trust-digest [flags]        print the digest of the CLI's baseline and defaults
+  trust-digest [flags]           print the digest of the baseline and defaults
+
+validate, explain and trust-digest take --install <file> --install-revision <commit>
+to read the baseline, defaults, known agents and gate registry from an install
+config, or --interim-defaults to use the CLI's interim policy (which has no
+secret-scan or dependency-scan gates). One of the two is required.
 
 Run "factory contract <command> -h" for the flags of a command.
 `
@@ -42,11 +48,17 @@ type stringList []string
 func (s *stringList) String() string     { return strings.Join(*s, ",") }
 func (s *stringList) Set(v string) error { *s = append(*s, v); return nil }
 
-// contractOptions are the flags shared by validate and explain.
+// interimFlags are the flags that stand in for an install config. --install
+// replaces them, so passing both is a usage error.
+func interimFlags() []string {
+	return []string{"known-agent", "switch-stale-days", "switch-abandoned-days", "review-budget-lines", "interim-defaults"}
+}
+
+// contractOptions are the flags shared by validate, explain and trust-digest.
 //
-// The install defaults and the baseline below are CLI defaults. WI-07's
-// install config replaces them; until then they let a developer or CI job run
-// the same checks the factory runs.
+// With --install the baseline, the install defaults, the known agents and the
+// gate registry come from the install config. Without it the interim defaults
+// below apply, so a developer or CI job can still run the checks without one.
 type contractOptions struct {
 	root                     string
 	revision                 string
@@ -58,6 +70,14 @@ type contractOptions struct {
 	noRegistry               bool
 	trustedDigest            string
 	asJSON                   bool
+	install                  string
+	installRevision          string
+	interim                  bool
+
+	// Set by prepare.
+	base contract.Baseline
+	defs contract.Defaults
+	reg  contract.GateRegistry // the install config's registry, nil without --install
 }
 
 func newContractFlags(name string, stderr io.Writer) (*flag.FlagSet, *contractOptions) {
@@ -70,20 +90,65 @@ func newContractFlags(name string, stderr io.Writer) (*flag.FlagSet, *contractOp
 	fs.IntVar(&o.staleDays, "switch-stale-days", 30, "install default for overrides.switchStaleDays")
 	fs.IntVar(&o.abandonedDays, "switch-abandoned-days", 30, "install default for overrides.switchAbandonedDays")
 	fs.IntVar(&o.reviewBudgetLines, "review-budget-lines", 300, "install default for overrides.reviewBudgetLines")
+	fs.BoolVar(&o.interim, "interim-defaults", false, "use the CLI's interim baseline and defaults, which have no SEC-4 gates, instead of an install config")
+	fs.StringVar(&o.install, "install", "", "install config file: the baseline, defaults, known agents and gate registry come from it, and the interim flags are refused")
+	fs.StringVar(&o.installRevision, "install-revision", "", "full commit ID (40 or 64 hex digits) the install config is at; part of the policy identity (only with --install)")
 	return fs, o
 }
 
-func (o *contractOptions) baseline() contract.Baseline {
+// prepare settles the baseline, the defaults and the gate registry from the
+// flags. fs must already be parsed. It returns a usage error for a flag
+// combination that does not make sense.
+func (o *contractOptions) prepare(fs *flag.FlagSet, stdout, stderr io.Writer, usage string) error {
+	if o.install == "" {
+		if o.installRevision != "" {
+			return usageError(stderr, usage, "--install-revision needs --install")
+		}
+		if !o.interim {
+			return usageError(stderr, usage, "give --install <file> (with --install-revision), or --interim-defaults to use the CLI's interim policy, which has no secret-scan or dependency-scan gates")
+		}
+		o.base, o.defs, o.reg = o.interimBaseline(), o.interimDefaults(), nil
+		fmt.Fprintln(stderr, "note: using the CLI's interim baseline and defaults (--interim-defaults), not an install config")
+		return nil
+	}
+	var clash []string
+	fs.Visit(func(f *flag.Flag) {
+		if slices.Contains(interimFlags(), f.Name) {
+			clash = append(clash, "--"+f.Name)
+		}
+	})
+	if len(clash) > 0 {
+		return usageError(stderr, usage, "%s cannot be combined with --install: the install config supplies the baseline, defaults and known agents",
+			strings.Join(clash, ", "))
+	}
+	cfg, err := loadInstall(stdout, o.install)
+	if err != nil {
+		return err
+	}
+	if !revisionRE.MatchString(o.installRevision) {
+		return usageError(stderr, usage, "--install needs --install-revision, the full 40 or 64 digit lowercase hex commit the install config is at: evidence binds to it")
+	}
+	if cfg, err = cfg.WithRevision(o.installRevision); err != nil {
+		return fmt.Errorf("install revision: %w", err)
+	}
+	if o.base, err = cfg.Baseline(); err != nil {
+		return fmt.Errorf("install baseline: %w", err)
+	}
+	o.defs, o.reg = cfg.Defaults(), cfg.GateRegistry()
+	return nil
+}
+
+func (o *contractOptions) interimBaseline() contract.Baseline {
 	return contract.Baseline{
 		Reviewers:        []string{"pr-reviewer", "security-reviewer"},
 		PRReviewer:       "pr-reviewer",
 		SecurityReviewer: "security-reviewer",
-		Protected:        []string{".github/workflows/**", ".github/actions/**", "CODEOWNERS"},
+		Protected:        install.DefaultProtected(),
 		KnownAgents:      o.knownAgents,
 	}
 }
 
-func (o *contractOptions) defaults() contract.Defaults {
+func (o *contractOptions) interimDefaults() contract.Defaults {
 	return contract.Defaults{
 		SwitchStaleDays: o.staleDays, SwitchAbandonedDays: o.abandonedDays, ReviewBudgetLines: o.reviewBudgetLines,
 	}
@@ -172,7 +237,7 @@ func reportProblems(stdout io.Writer, err error) error {
 	return fmt.Errorf("contract validation failed: %d problem(s)", len(ve.Problems))
 }
 
-const validateUsage = `usage: factory contract validate --revision <commit> (--gate-registry <file> | --no-gate-registry) [flags]
+const validateUsage = `usage: factory contract validate --revision <commit> (--install <file> --install-revision <commit> | --gate-registry <file> | --no-gate-registry) [flags]
 
 Validate the contracts in a checkout (default "."). Problems are printed one
 per line to stdout and the exit status is non-zero if there are any.
@@ -204,22 +269,28 @@ func runValidate(ctx context.Context, args []string, stdout, stderr io.Writer) e
 		return usageError(stderr, validateUsage, "--revision must be a full 40 or 64 digit lowercase hex commit ID")
 	}
 	switch {
+	case o.install != "" && (o.registry != "" || o.noRegistry):
+		return usageError(stderr, validateUsage, "--gate-registry and --no-gate-registry cannot be combined with --install: the install config holds the registry")
 	case o.registry != "" && o.noRegistry:
 		return usageError(stderr, validateUsage, "--gate-registry and --no-gate-registry are exclusive")
-	case o.registry == "" && !o.noRegistry:
-		return usageError(stderr, validateUsage, "give --gate-registry <file>, or --no-gate-registry to skip the registry check")
+	case o.install == "" && o.registry == "" && !o.noRegistry:
+		return usageError(stderr, validateUsage, "give --install <file>, --gate-registry <file>, or --no-gate-registry to skip the registry check")
 	}
 	if o.trustedDigest != "" && len(o.changed) == 0 {
 		return usageError(stderr, validateUsage, "--trusted-digest applies only with --changed")
 	}
-	var reg contract.GateRegistry
-	if o.registry != "" {
+	if err := o.prepare(fs, stdout, stderr, validateUsage); err != nil {
+		return err
+	}
+	reg := o.reg
+	switch {
+	case o.registry != "":
 		r, err := readRegistry(o.registry)
 		if err != nil {
 			return err
 		}
 		reg = r
-	} else {
+	case o.install == "":
 		fmt.Fprintln(stderr, "note: gates were not checked against a registry (--no-gate-registry)")
 	}
 	set, err := o.loadSet(ctx, stdout)
@@ -229,7 +300,7 @@ func runValidate(ctx context.Context, args []string, stdout, stderr io.Writer) e
 	opts := contract.ChangeOptions{Changed: o.changed, Registry: reg, TrustedDigest: o.trustedDigest}
 	// Without --changed an empty digest makes this a full validation, in one
 	// call, so every problem and every unregistered gate is reported together.
-	sc, verr := contract.ValidateChanged(ctx, set, o.baseline(), o.defaults(), opts)
+	sc, verr := contract.ValidateChanged(ctx, set, o.base, o.defs, opts)
 	switch {
 	case errors.Is(verr, pathglob.ErrInvalidPath):
 		return usageError(stderr, validateUsage, "--changed: %v", verr)
@@ -249,9 +320,10 @@ func runValidate(ctx context.Context, args []string, stdout, stderr io.Writer) e
 
 const trustDigestUsage = `usage: factory contract trust-digest [flags]
 
-Print the digest of the baseline and install defaults this CLI uses, which
-"factory contract validate --trusted-digest" compares against. Pass the
-same --known-agent and default flags you pass to validate.
+Print the digest of the baseline and install defaults, which
+"factory contract validate --trusted-digest" compares against. Pass the same
+--install (and --install-revision) or --known-agent and default flags you pass
+to validate. The digest covers the install revision.
 
 `
 
@@ -266,7 +338,10 @@ func runTrustDigest(args []string, stdout, stderr io.Writer) error {
 	if fs.NArg() != 0 {
 		return usageError(stderr, trustDigestUsage, "unexpected argument %q", fs.Arg(0))
 	}
-	_, err := fmt.Fprintln(stdout, contract.TrustDigest(o.baseline(), o.defaults()))
+	if err := o.prepare(fs, stdout, stderr, trustDigestUsage); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintln(stdout, contract.TrustDigest(o.base, o.defs))
 	return err
 }
 
@@ -292,11 +367,14 @@ func runExplain(ctx context.Context, args []string, stdout, stderr io.Writer) er
 	if !revisionRE.MatchString(o.revision) {
 		return usageError(stderr, explainUsage, "--revision must be a full 40 or 64 digit lowercase hex commit ID")
 	}
+	if err := o.prepare(fs, stdout, stderr, explainUsage); err != nil {
+		return err
+	}
 	set, err := o.loadSet(ctx, stdout)
 	if err != nil {
 		return err
 	}
-	p, err := contract.Compile(set, o.baseline(), o.defaults())
+	p, err := contract.Compile(set, o.base, o.defs)
 	if err != nil {
 		return reportProblems(stdout, err)
 	}

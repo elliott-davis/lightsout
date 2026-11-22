@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"unicode"
-	"unicode/utf8"
+
+	"github.com/elliott-davis/lightsout/internal/yamlsafe"
 )
 
 const (
@@ -138,48 +138,9 @@ func newValidationError(problems []Problem) *ValidationError {
 	return &ValidationError{Problems: problems}
 }
 
-// display makes untrusted text safe to print on one line. It escapes every
-// rune that is not printable or is a format character (so newlines, escape
-// sequences and bidi overrides cannot forge output) and a literal backslash
-// (so the text \u000a in input cannot pass for an escaped newline) and '#'
-// (so no "##[command" can reach a CI log). It returns
-// at most limit bytes including the ellipsis that marks a cut, which falls on a
-// rune boundary.
-func display(s string, limit int) string {
-	const marker = "\u2026"
-	var b strings.Builder
-	cut := 0 // longest prefix of b at a piece boundary that leaves room for the marker
-	for s != "" {
-		r, size := utf8.DecodeRuneInString(s)
-		var piece string
-		switch {
-		case r == utf8.RuneError && size == 1:
-			piece = fmt.Sprintf(`\x%02x`, s[0])
-		case r == '\\':
-			piece = `\\`
-		case r == '#':
-			// GitHub's legacy runner parser finds "##[" anywhere in a line.
-			piece = `\x23`
-		case !unicode.IsPrint(r) || unicode.Is(unicode.Cf, r):
-			if r <= 0xffff {
-				piece = fmt.Sprintf(`\u%04x`, r)
-			} else {
-				piece = fmt.Sprintf(`\U%08x`, r)
-			}
-		default:
-			piece = s[:size]
-		}
-		b.WriteString(piece)
-		s = s[size:]
-		if b.Len()+len(marker) <= limit {
-			cut = b.Len()
-		}
-		if b.Len() > limit {
-			return b.String()[:cut] + marker
-		}
-	}
-	return b.String()
-}
+// display makes untrusted text safe to print on one line and at most limit
+// bytes long. See [yamlsafe.Escape] for the rules.
+func display(s string, limit int) string { return yamlsafe.Escape(s, limit) }
 
 // EscapeText makes untrusted text, such as an error message that carries a
 // repository path, safe to print on one line: it escapes control and format
@@ -188,10 +149,4 @@ func display(s string, limit int) string {
 func EscapeText(s string) string { return display(s, 8192) }
 
 // quote renders untrusted text safely and bounded.
-func quote(s string) string {
-	const maxLen = 100
-	if len(s) > maxLen {
-		s = strings.ToValidUTF8(s[:maxLen], "") + "..."
-	}
-	return strings.ReplaceAll(fmt.Sprintf("%q", s), "#", `\x23`)
-}
+func quote(s string) string { return yamlsafe.Quote(s) }

@@ -18,7 +18,13 @@ items in [the backlog](../backlog.md). They consume the types defined here.
 A contract is repo content and untrusted until activated (SEC-1). Parsing is staged so that each layer fails closed:
 
 1. **Size and shape.** Reject files over 64 KiB, multiple YAML documents, anchors and aliases, custom tags,
-   non-string mapping keys, duplicate keys and nesting deeper than 16.
+   non-string mapping keys, duplicate keys and nesting deeper than 16. This stage is `internal/yamlsafe`, shared with
+   the install config: `yamlsafe.Decode(data, Limits{MaxBytes, MaxDepth, MaxNodes, Name})` caps the byte size first,
+   then checks the encoding (UTF-8, no byte-order mark, no NUL) and converts one YAML document to plain JSON values.
+   Its `*Error{Code, Message, Path}` codes (`syntax`, `unsafe-yaml`, `too-large` and `schema` for an
+   unrepresentable scalar) are the contract problem codes of the same name, and the messages and pointers are escaped
+   the same way. Contract limits are 64 KiB, depth 16 and 10,000 nodes. A golden file
+   (`testdata/yaml_pipeline.golden`) pins what the pipeline does to every fixture, recorded before the move.
 2. **JSON Schema.** Convert the YAML node tree to plain JSON values and validate them against the embedded,
    versioned schema (`internal/contract/schema/v1alpha1.json`). Every object sets `additionalProperties: false`, so
    any unknown field, including `command`, `run`, `script` or `steps`, fails (CON-11, CON-4).
@@ -238,6 +244,12 @@ error for any of these:
 - `PRReviewer` or `SecurityReviewer` that isn't one of `Reviewers`, or the same role for both. They are the two
   independent core reviews, so every change gets both (AGD-1, AGD-3).
 - An invalid protected pattern.
+- An `InstallRevision` that is not empty and not 40 or 64 lowercase hex digits.
+
+`InstallRevision` is the commit of the install config the baseline came from (empty only in tests that build a
+baseline by hand). `Effective.InstallRevision` carries it next to `Effective.Revision`, so evidence binds to both the
+contract revision and the install revision, and the trust digest covers it. Changing a baseline gate therefore
+cannot leave the policy identity of the evidence unchanged (RUN-1).
 
 `SecurityReviewer` is the role whose sign-off a sensitive path needs (SEC-5), and the effective contract carries it
 so the consumer knows whom to require.
@@ -292,8 +304,9 @@ tests and callers can assert exactly what ran.
   revision its descendant still pins to the old one, is found.
 - **The trust premise.** Contracts outside the scope are valid only if they were validated at the trusted revision
   under the same baseline, defaults and validator. `TrustDigest(baseline, defaults)` (named for what it covers, which is
-  more than the baseline) is a SHA-256 over a canonical encoding of every field of both, the SHA-256 of the contract
-  schema, a `validatorVersion` constant (bump it whenever a validation rule changes), `MaxStackDepth`, `MaxStackGates`
+  more than the baseline) is a SHA-256 over a canonical encoding of every field of both (the baseline's
+  `InstallRevision` included), the SHA-256 of the contract
+  schema, a `validatorVersion` constant (2 since the install revision check) (bump it whenever a validation rule changes), `MaxStackDepth`, `MaxStackGates`
   and the default work budgets. WI-11 stores it with each trusted revision and passes it as `TrustedDigest`. If it is
   empty (unknown) or differs from the current digest, `ValidateChanged` validates every contract and sets `Scope.Full`.
 - **CON-4.** With `Registry` set, the gates of *every* compiled contract, in scope or not, and of the baseline are
@@ -378,14 +391,23 @@ the forge; this command is for developers and CI checkouts, where the checkout i
   gates are reported together. `--changed` (a directory, not a file path; a file path is a usage error) validates only
   the scope when `--trusted-digest` matches `trust-digest`, and everything otherwise, with a stderr note saying so.
   `--trusted-digest` without `--changed` is a usage error.
-- `trust-digest [defaults flags]` prints the trust digest of the CLI's baseline and defaults, so CI can pin it.
+- `trust-digest (--install <file> --install-revision <sha> | --interim-defaults [defaults flags])` prints the trust digest of the
+  baseline and defaults, so CI can pin it.
 - `explain --revision <sha> [--root .] [--json] <path>` compiles the tree (a tree with problems prints them and fails)
   and prints the explanation. Flags come before the path.
 
-Until WI-07's install config exists, the install defaults and the baseline are CLI defaults: `--switch-stale-days 30`,
-`--switch-abandoned-days 30`, `--review-budget-lines 300`; reviewers `pr-reviewer` and `security-reviewer` (PR reviewer
-and security reviewer respectively); no baseline gates; protected `.github/workflows/**`, `.github/actions/**` and
-`CODEOWNERS`. WI-07 replaces them.
+`validate`, `explain` and `trust-digest` need a policy source: `--install <file>` with `--install-revision <sha>`, or `--interim-defaults`. The install config
+(docs/design/install.md) then supplies the baseline, the defaults, the known agents and the gate registry, so none of
+them can drift from what the factory uses. `--known-agent`, `--switch-stale-days`, `--switch-abandoned-days` and
+`--review-budget-lines` are refused with it (a usage error, even at the default value), and so are `--gate-registry`
+and `--no-gate-registry` on `validate`. An invalid install file prints its problems and fails before any contract is read.
+`--install-revision` sets the policy identity (40 or 64 hex digits) and is required with `--install`; `--interim-defaults` can't be combined with `--install`. `factory install validate
+<file>` checks an install file alone.
+
+Without `--install` the command is a usage error unless `--interim-defaults` is given, because the interim policy has no secret-scan or dependency-scan gates (SEC-4) and must never apply silently. With `--interim-defaults` the interim CLI defaults apply and each command prints a stderr note saying so: `--switch-stale-days
+30`, `--switch-abandoned-days 30`, `--review-budget-lines 300`; reviewers `pr-reviewer` and `security-reviewer` (PR
+reviewer and security reviewer respectively); no baseline gates; protected `.github/workflows/**`, `.github/actions/**`
+and every CODEOWNERS location (`install.DefaultProtected()`, seeded from `codeowners.Locations()`).
 
 `Problem.String` renders `"file" "field": [code] message`, with File and Field quoted (a `"` escaped) so that a
 directory named `::error title=x::y` cannot start a line and a `:` or `[` in a name cannot pass for the field or
@@ -398,7 +420,7 @@ keys and path names, and they end up in CI logs and PR comments, where a raw new
 ## Dependencies
 
 - `go.yaml.in/yaml/v3`: the maintained successor to the archived `gopkg.in/yaml.v3`. Needed to parse YAML at the
-  node level.
+  node level. Used by `internal/yamlsafe`, which both contract and install parsing call.
 - `github.com/santhosh-tekuri/jsonschema/v6`: a draft 2020-12 validator. CON-11 requires validation against the
   published schema, not an approximation of it. The schema compiles from embedded bytes, and the loader refuses
   every external reference, so validation never touches the file system or the network.

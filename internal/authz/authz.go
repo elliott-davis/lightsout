@@ -14,6 +14,7 @@ package authz
 
 import (
 	"context"
+	"slices"
 	"time"
 
 	"github.com/elliott-davis/lightsout/internal/audit"
@@ -56,6 +57,12 @@ type Scope struct {
 type Operation string
 
 // Operations.
+//
+// [OpActivateInstall] is one approver's decision. Activating an install revision needs the install's quorum of distinct
+// granted decisions, each by a different member of the currently active revision, and each bound (Target.Revision) to the
+// value of install.ActivationRevision: the installation, the active generation and the candidate commit. Authz checks one decision at a time and cannot count, so the caller (the activation path, WI-10 and
+// WI-11) gathers the grants and counts distinct principals in the same transaction that compares and swaps the active
+// generation.
 const (
 	OpConfirmClassification Operation = "confirm-classification" // INT-3
 	OpDecideSplit           Operation = "decide-split"           // INT-11
@@ -64,6 +71,7 @@ const (
 	OpApprovePathException  Operation = "approve-path-exception" // CON-7
 	OpApproveLightsOn       Operation = "approve-lights-on"      // CON-8
 	OpActivateContract      Operation = "activate-contract"      // CON-2
+	OpActivateInstall       Operation = "activate-install"       // RUN-1: activates an install config revision
 	OpHalt                  Operation = "halt"                   // SEC-6
 	OpResume                Operation = "resume"                 // SEC-6
 )
@@ -78,6 +86,9 @@ const (
 	RoleCodeOwner     Role = "code-owner"
 	RoleContractOwner Role = "contract-owner"
 	RoleAdmin         Role = "admin"
+	// RolePolicyApprover is held by the install's policy approvers (Enterprise IT), who activate install config
+	// revisions. A decision proves one approver. Quorum is the caller's job: see [OpActivateInstall].
+	RolePolicyApprover Role = "policy-approver"
 )
 
 // Channel is how the decision arrived.
@@ -193,7 +204,19 @@ func operations() map[Operation]opPolicy {
 		OpApprovePathException:  {Role: RolePathOwner, ScopeKind: ScopeRepo, Subjects: change, Area: true},
 		OpApproveLightsOn:       {Role: RoleCodeOwner, ScopeKind: ScopeRepo, Subjects: change, Area: true},
 		OpActivateContract:      {Role: RoleContractOwner, ScopeKind: ScopeRepo, Subjects: change, Area: true},
+		OpActivateInstall:       {Role: RolePolicyApprover, ScopeKind: ScopeInstall, Subjects: install},
 		OpHalt:                  {Role: RoleAdmin, ScopeKind: ScopeInstall, Subjects: install},
 		OpResume:                {Role: RoleAdmin, ScopeKind: ScopeInstall, Subjects: install},
 	}
+}
+
+// Operations returns every operation, sorted. Install config validates its per-operation settings against it.
+func Operations() []Operation {
+	ops := operations()
+	out := make([]Operation, 0, len(ops))
+	for op := range ops {
+		out = append(out, op)
+	}
+	slices.Sort(out)
+	return out
 }
