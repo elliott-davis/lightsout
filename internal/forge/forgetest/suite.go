@@ -36,6 +36,7 @@ func Run(t *testing.T, newHarness func(t *testing.T) Harness) {
 	}{
 		{"SEC-10_actor_login_changes_ID_is_stable", testActorRename},
 		{"SEC-10_team_membership_removal_visible_next_read", testTeamMembership},
+		{"SEC-10_repo_and_team_permissions_read_live", testPermissions},
 		{"SEC-10_revoked_actor_unknown_non_member_and_cannot_push", testRevocation},
 		{"INTG-1_issue_by_node_ID_survives_transfer", testIssueTransfer},
 		{"INTG-1_create_issue_idempotent_on_key", testCreateIssueIdempotent},
@@ -276,6 +277,67 @@ func testTeamMembership(e *env) {
 	check(t, ids.RemoveTeamMember(e.ctx(), "acme", "owners", e.author.ID))
 	if try(e.h.IsTeamMember(e.ctx(), "acme", "owners", e.author.ID)).get(t) {
 		t.Fatal("removed member still seen on the next read")
+	}
+}
+
+func testPermissions(e *env) {
+	t := e.t
+	ids := need[Identities](e)
+	perms := need[Permissions](e)
+	ctx := e.ctx()
+	check(t, perms.SetRepoOwner(ctx, e.repo, "Acme"))
+	if r := try(e.h.GetRepo(ctx, e.repo)).get(t); r.ID != e.repo || r.Owner != "Acme" || r.Name != "app" {
+		t.Fatalf("GetRepo = %+v, want ID %s, name app, owner Acme", r, e.repo)
+	}
+	_, err := e.h.GetRepo(ctx, "no-such-repo")
+	wantErr(t, err, forge.ErrNotFound)
+
+	if p := try(e.h.RepoPermission(ctx, e.repo, e.author.ID)).get(t); p.AtLeast(forge.PermWrite) {
+		t.Fatalf("no access granted yet, got %s", p)
+	}
+	check(t, perms.SetRepoPermission(ctx, e.repo, e.author.ID, forge.PermWrite))
+	if p := try(e.h.RepoPermission(ctx, e.repo, e.author.ID)).get(t); p != forge.PermWrite {
+		t.Fatalf("permission = %s, want write", p)
+	}
+	check(t, perms.SetRepoPermission(ctx, e.repo, e.author.ID, forge.PermRead))
+	if p := try(e.h.RepoPermission(ctx, e.repo, e.author.ID)).get(t); p.AtLeast(forge.PermWrite) {
+		t.Fatalf("downgrade not visible on the next read, got %s", p)
+	}
+	_, err = e.h.RepoPermission(ctx, e.repo, "no-such-actor")
+	wantErr(t, err, forge.ErrNotFound)
+	_, err = e.h.RepoPermission(ctx, "no-such-repo", e.author.ID)
+	wantErr(t, err, forge.ErrNotFound)
+
+	if p := try(e.h.TeamRepoPermission(ctx, e.repo, "acme", "owners")).get(t); p.AtLeast(forge.PermWrite) {
+		t.Fatalf("team without access has %s", p)
+	}
+	check(t, perms.SetTeamRepoPermission(ctx, e.repo, "acme", "owners", forge.PermMaintain))
+	if p := try(e.h.TeamRepoPermission(ctx, e.repo, "acme", "owners")).get(t); p != forge.PermMaintain {
+		t.Fatalf("team permission = %s, want maintain", p)
+	}
+	check(t, perms.SetTeamRepoPermission(ctx, e.repo, "acme", "owners", forge.PermRead))
+	if p := try(e.h.TeamRepoPermission(ctx, e.repo, "acme", "owners")).get(t); p != forge.PermRead || p.AtLeast(forge.PermWrite) {
+		t.Fatalf("team downgrade not visible on the next read, got %s", p)
+	}
+	_, err = e.h.TeamRepoPermission(ctx, "no-such-repo", "acme", "owners")
+	wantErr(t, err, forge.ErrNotFound)
+
+	_, err = e.h.GetTeam(ctx, "acme", "ghosts")
+	wantErr(t, err, forge.ErrNotFound)
+	check(t, perms.SetTeam(ctx, "acme", "ghosts", forge.PrivacySecret))
+	if tm := try(e.h.GetTeam(ctx, "acme", "ghosts")).get(t); tm.Privacy != forge.PrivacySecret || tm.Org != "acme" || tm.Slug != "ghosts" {
+		t.Fatalf("GetTeam = %+v, want a secret acme/ghosts", tm)
+	}
+	check(t, perms.SetTeam(ctx, "acme", "ghosts", forge.PrivacyVisible))
+	if tm := try(e.h.GetTeam(ctx, "acme", "ghosts")).get(t); tm.Privacy != forge.PrivacyVisible {
+		t.Fatalf("privacy change not visible on the next read, got %s", tm.Privacy)
+	}
+
+	// A revoked actor has no access, whatever it held.
+	check(t, perms.SetRepoPermission(ctx, e.repo, e.coder.ID, forge.PermAdmin))
+	check(t, ids.RevokeActor(ctx, e.coder.ID))
+	if p := try(e.h.RepoPermission(ctx, e.repo, e.coder.ID)).get(t); p.AtLeast(forge.PermRead) {
+		t.Fatalf("revoked actor has %s", p)
 	}
 }
 

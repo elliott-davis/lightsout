@@ -84,7 +84,7 @@ lands. Design notes for larger items live in [docs/design/](design/).
 | --- | --- | --- | --- | --- |
 | WI-08 | Forge interface and in-memory fake | INTG-1 (interface) | WI-06 | done |
 | WI-08a | Forge fake: remaining denial tests and fidelity | SEC-2, SEC-3, SEC-11 | WI-08 | todo |
-| WI-09 | CODEOWNERS ownership resolution | CON-2 (ownership) | WI-08 | todo |
+| WI-09 | CODEOWNERS ownership resolution | CON-2 (ownership) | WI-08 | done |
 | WI-10 | State store and event loop | NFR-5 (event paths), NFR-4 (durable store) | WI-05, WI-08 | todo |
 | WI-11 | Contract activation and protected policy path | CON-2, CON-6, CON-10 (review path) | WI-04, WI-06, WI-09, WI-10 | todo |
 | WI-12 | GitHub adapter | INTG-1 | WI-08 | todo |
@@ -135,9 +135,11 @@ lands. Design notes for larger items live in [docs/design/](design/).
   From WI-06: use `authz.OpActivateContract` with `Target.Revision` set to the contract proposal revision and `Paths` set to the area. Require one grant per affected owner area under the previously trusted CODEOWNERS. Test that a proposal whose own CODEOWNERS edit would make the approver an owner is denied.
   From WI-03: protected-path classification already exists (`PathPolicy.Protected`; contract files and `Baseline.Protected` are always Forbidden). Reuse it; don't build a second matcher. Bind activation to `Effective.Revision`.
   From WI-04: validate a contract proposal with ValidateChanged plus the registry in one call, bound to the proposal revision. Derive changedDirs from the forge diff between the trusted and proposal revisions, never from the PR text: added, edited, deleted and renamed contracts, both sides of a rename. Pass dirs, not file paths. Misnamed, case-variant and symlinked contract files block. Assert the diff covers every contract file that differs. Store Scope.Checked and the registry answers with the activation decision for audit. derive Changed by comparing each contract file's digest against the trusted set, not only from the forge file list, which can be truncated. Include the old path of every rename. Always run a full Compile (about 2 s worst case) before activating anything. Incremental validation is for PR feedback only (WI-04a).
+  From WI-09: build the owner RoleSource from codeowners.Load at the previously trusted base SHA, never the proposal head. Take that SHA from the protected default ref, never from the PR payload's base (GitHub serves fork commits by SHA). A Load error (ParseError, ErrSymlink, ErrTooLarge, ErrIncomplete) denies; never fall back. Record File.Revision() and File.Path() in the activation audit. RoleContractOwner checks the contract file paths being activated, which matches what GitHub's own code-owner review enforces (authz.md). Use one Target per owner area. Tests: a proposal that edits or adds .github/CODEOWNERS to make the approver an owner is denied; a repo A RoleSource never authorizes in repo B.
 - **WI-12** `internal/forge/github`: go-github implementation of WI-08, GitHub App auth, issue types, Checks
   publishing and the merge queue. Contract tests run the same suite against the fake and against recorded fixtures.
   From WI-08: implement forgetest.Harness over recorded fixtures. Tests: url.PathEscape of identity values; an invalid tree name means Tree errors; modes 120000/160000; Compare beyond 3000 files and truncated trees are recovered or give ErrIncomplete. JobExecution.Provenance is Complete only when every field, including reusable-workflow repo/commit, came from the API.
+  From WI-09: verify CODEOWNERS wildcard-last-segment descent (`*.js` vs `lib.js/x.ts`), inline `# comment` among owners, and unknown-owner lines against recorded GitHub behavior. IsTeamMember maps GitHub's `state: pending` to false (active membership only).
 
 ## Phase 3: Verify
 
@@ -162,6 +164,7 @@ lands. Design notes for larger items live in [docs/design/](design/).
   headers and contract paths, and compares the total against the smallest budget that applies (INT-19). The shape
   rules don't trust contract-declared `generated` paths alone.
   From WI-03: `Effective` has no change-level verdict. Build "all writable, or all read-only plus owner approval; mixed fails" from `Paths[i].Access`. Uncovered, Protected, `ErrInvalidPath` and `ErrTooComplex` all fail. Use the smallest `ReviewBudgetLines` across paths. `Generated` is an override, so never trust it alone. Escape raw path text in any output.
+  From WI-09: CON-7 path exceptions pass Paths = exactly the read-only paths touched, with CODEOWNERS at the trusted base. A CODEOWNERS Load error is a failed gate with its own ID. A product PR that adds, modifies, deletes or symlinks any codeowners.Locations() path, or a case or normalization variant of one, fails as protected (CON-6).
 - **WI-15** Reviewer context excludes coder reasoning and holdouts (AGT-3). Provisional blocks carry location,
   invariant, consequence and verification plan, with confirmation or dismissal on evidence (AGT-4, P4). A round cap
   escalates to an owner (AGT-5). Sensitive paths need security signoff (SEC-5). Lights-on needs current owner
@@ -254,6 +257,7 @@ lands. Design notes for larger items live in [docs/design/](design/).
   accepted only after it reproduces a green CI result, with CI as the fallback (AGT-8).
 - **WI-32** Templates for the v1 roles (AGD-1). Pinned profiles per role (AGT-7). A qualification suite with
   positive and negative fixtures per role (NFR-2). Rubber-duck refinement (INT-2) and the onboarder's draft (CON-10).
+  From WI-09: CODEOWNERS parsing fails closed, so one bad line removes every owner. The onboarder must report CODEOWNERS parse errors as a blocker.
 
 ## Phase 7: cost, operations and security regression
 

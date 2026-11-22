@@ -28,6 +28,7 @@ func (h harness) Pusher(ctx context.Context, principal forge.Actor, repo forge.R
 var (
 	_ forgetest.Editor        = (*fake.Forge)(nil)
 	_ forgetest.Identities    = (*fake.Forge)(nil)
+	_ forgetest.Permissions   = (*fake.Forge)(nil)
 	_ forgetest.TreeSetup     = (*fake.Forge)(nil)
 	_ forgetest.QueueSetup    = (*fake.Forge)(nil)
 	_ forgetest.FaultInjector = (*fake.Forge)(nil)

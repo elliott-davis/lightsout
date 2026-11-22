@@ -48,6 +48,59 @@ type Actor struct {
 // RepoID is the forge's stable repository ID, not its name.
 type RepoID string
 
+// Repo describes a repository. Owner is the login of the owning organization or user, which a consumer compares
+// ASCII case-insensitively with the org of a team before trusting that team's access.
+type Repo struct {
+	ID    RepoID
+	Name  string
+	Owner string
+}
+
+// Permission is the access level an account or team holds on one repository. The zero value is unknown and
+// fails closed: it is never at least any level.
+type Permission int
+
+// Permissions, from least to most access.
+const (
+	PermUnknown Permission = iota
+	PermNone
+	PermRead
+	PermTriage
+	PermWrite
+	PermMaintain
+	PermAdmin
+)
+
+func (p Permission) String() string {
+	return enumName([]string{nameUnknown, "none", "read", "triage", "write", "maintain", "admin"}, int(p))
+}
+
+// AtLeast reports whether p is known and grants at least the given level. A value outside the known range is unknown, so it is false on either side.
+func (p Permission) AtLeast(least Permission) bool {
+	return p > PermUnknown && p <= PermAdmin && least > PermUnknown && least <= PermAdmin && p >= least
+}
+
+// TeamPrivacy says who can see a team. The zero value is unknown and fails closed.
+type TeamPrivacy int
+
+// Team privacy values. GitHub ignores a secret team as a code owner.
+const (
+	PrivacyUnknown TeamPrivacy = iota
+	PrivacyVisible
+	PrivacySecret
+)
+
+func (p TeamPrivacy) String() string {
+	return enumName([]string{nameUnknown, "visible", "secret"}, int(p))
+}
+
+// Team describes a team. Org and Slug are lowercase.
+type Team struct {
+	Org     string
+	Slug    string
+	Privacy TeamPrivacy
+}
+
 // EditState says whether a comment or review changed after it was created. The zero value fails closed.
 type EditState int
 

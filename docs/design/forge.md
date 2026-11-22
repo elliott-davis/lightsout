@@ -76,7 +76,13 @@ A re-run of one matrix leg supersedes only that leg. The consumer rule is exactl
 
 - **IdentityReader:**
   - `GetActor(id)` returns the current login.
-  - `IsTeamMember(org, team, actorID)` checks membership live, with no cache (WI-09).
+  - `IsTeamMember(org, team, actorID)` checks membership live, with no cache (WI-09). Org and team are passed lowercase. Only active membership counts: a pending invitation is not a member.
+- **PermissionReader** (WI-09): GitHub ignores a code owner without write access, so ownership needs these reads, all live with no cache.
+  - `GetRepo(repo)` returns `Repo{ID, Name, Owner}`, where `Owner` is the owning org or user login. A team counts as an owner only if its org is the repo's owner (ASCII case-insensitive).
+  - `RepoPermission(repo, actorID)` returns the actor's effective `Permission`. A revoked actor has `PermNone`. An unknown actor or repo is `ErrNotFound`.
+  - `TeamRepoPermission(repo, org, team)` returns the team's `Permission`, `PermNone` when it has no access.
+  - `GetTeam(org, team)` returns `Team{Org, Slug, Privacy}`, where privacy is unknown (zero, fails closed), visible or secret. GitHub ignores a secret team as a code owner, so only a visible team can own. An unknown team is `ErrNotFound`.
+  - `Permission` is unknown (zero), none, read, triage, write, maintain or admin. Unknown fails closed: `AtLeast` is false for it and for any value outside the known range.
 - **IssueReader:**
   - `GetIssue`, `GetIssueByNodeID` and `ListSubIssues`.
   - `ListComments` is complete or ErrIncomplete. A missing issue or PR is ErrNotFound.
@@ -233,3 +239,14 @@ idempotent creates, pusher CAS and scoping, tree modes and symlink refusal, and 
 `Harness` is a small core: the capabilities plus the setup a recorded-fixture adapter can provide (repos, actors, change assignment, issues, comments, PRs, reviews, commits, refs, check runs and job executions).
 Setup that needs the forge to mutate on demand lives in optional interfaces: `Editor`, `Identities`, `TreeSetup`, `QueueSetup` and `FaultInjector`.
 Every setup method takes a context as its first argument, because an adapter does I/O there. A subtest type-asserts the interface it needs and skips when the harness lacks it. The fake implements all of them, and WI-12 implements the core over recorded fixtures.
+
+## WI-12 obligations from CODEOWNERS
+
+Verify against real GitHub, and record the answers here, how it handles two kinds of line:
+
+- a line with an inline `# comment` among the owners, and
+- a line that names an unknown user or team.
+
+Also map GitHub's membership `state: pending` (an invitation not yet accepted) to false in `IsTeamMember`.
+
+If GitHub skips the whole line for either, we must skip it too, or we over-grant. Until that is verified, `internal/codeowners` does this: an inline `#` ends the owner list and the rest of the line is kept, and an owner token that is not a valid `@user`, `@org/team` or email makes the whole file invalid.

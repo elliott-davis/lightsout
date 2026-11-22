@@ -15,8 +15,23 @@ import (
 type IdentityReader interface {
 	// GetActor returns the actor's current login. A revoked or unknown ID is ErrNotFound.
 	GetActor(ctx context.Context, id string) (Actor, error)
-	// IsTeamMember checks membership live, with no cache.
+	// IsTeamMember checks membership live, with no cache. Org and team are passed lowercase.
 	IsTeamMember(ctx context.Context, org, team, actorID string) (bool, error)
+}
+
+// PermissionReader reads repository ownership and access, which GitHub requires before it honors a code owner:
+// an owner without write access to the repository is ignored.
+type PermissionReader interface {
+	// GetRepo returns the repository's current description. An unknown repo is ErrNotFound.
+	GetRepo(ctx context.Context, repo RepoID) (Repo, error)
+	// RepoPermission returns the actor's effective permission on the repo, read live with no cache. A revoked or
+	// deleted actor has PermNone. An unknown actor or repo is ErrNotFound.
+	RepoPermission(ctx context.Context, repo RepoID, actorID string) (Permission, error)
+	// GetTeam returns the team, with its privacy. An unknown team is ErrNotFound. Org and team are lowercase.
+	GetTeam(ctx context.Context, org, team string) (Team, error)
+	// TeamRepoPermission returns the team's permission on the repo, read live with no cache. A team with no access
+	// has PermNone. An unknown repo is ErrNotFound. Org and team are lowercase.
+	TeamRepoPermission(ctx context.Context, repo RepoID, org, team string) (Permission, error)
 }
 
 // IssueReader reads issues and comments.

@@ -31,19 +31,23 @@ import (
 // ForgeName is the Forge field of every actor the fake creates.
 const ForgeName = "fake"
 
+// DefaultOwner is the owner login of every repo the fake creates.
+const DefaultOwner = "acme"
+
 // Compile-time checks that Forge implements every capability, and Pusher the push capability.
 var (
-	_ forge.IdentityReader = (*Forge)(nil)
-	_ forge.IssueReader    = (*Forge)(nil)
-	_ forge.IssueWriter    = (*Forge)(nil)
-	_ forge.PRReader       = (*Forge)(nil)
-	_ forge.DiffReader     = (*Forge)(nil)
-	_ forge.CheckReader    = (*Forge)(nil)
-	_ forge.CheckWriter    = (*Forge)(nil)
-	_ forge.MergeQueue     = (*Forge)(nil)
-	_ forge.RulesReader    = (*Forge)(nil)
-	_ forge.TreeReader     = (*Forge)(nil)
-	_ forge.BranchPusher   = (*Pusher)(nil)
+	_ forge.IdentityReader   = (*Forge)(nil)
+	_ forge.PermissionReader = (*Forge)(nil)
+	_ forge.IssueReader      = (*Forge)(nil)
+	_ forge.IssueWriter      = (*Forge)(nil)
+	_ forge.PRReader         = (*Forge)(nil)
+	_ forge.DiffReader       = (*Forge)(nil)
+	_ forge.CheckReader      = (*Forge)(nil)
+	_ forge.CheckWriter      = (*Forge)(nil)
+	_ forge.MergeQueue       = (*Forge)(nil)
+	_ forge.RulesReader      = (*Forge)(nil)
+	_ forge.TreeReader       = (*Forge)(nil)
+	_ forge.BranchPusher     = (*Pusher)(nil)
 )
 
 var fullSHA = regexp.MustCompile(`^([0-9a-f]{40}|[0-9a-f]{64})$`)
@@ -70,6 +74,9 @@ type teamKey struct{ org, team string }
 type repoRec struct {
 	id         forge.RepoID
 	name       string
+	owner      string
+	perms      map[string]forge.Permission // actor ID -> permission, absent is none
+	teamPerms  map[teamKey]forge.Permission
 	issueTypes bool
 	defaultRef string
 	commits    map[string]*commit
@@ -102,6 +109,7 @@ type Forge struct {
 	factoryApp string
 	actors     map[string]*actorRec
 	teams      map[teamKey]map[string]bool
+	teamInfo   map[teamKey]forge.TeamPrivacy // teams that exist; AddTeamMember and SetTeamRepoPermission create a visible one
 	repos      map[forge.RepoID]*repoRec
 	issues     map[string]*forge.Issue // by node ID
 	limits     gittree.Limits
@@ -113,13 +121,14 @@ type Forge struct {
 // the factory: see [Forge.FactoryActor] and [Forge.FactoryAppID].
 func New(clock func() time.Time) *Forge {
 	f := &Forge{
-		clock:  clock,
-		actors: map[string]*actorRec{},
-		teams:  map[teamKey]map[string]bool{},
-		repos:  map[forge.RepoID]*repoRec{},
-		issues: map[string]*forge.Issue{},
-		faults: map[string]bool{},
-		trees:  map[string]*gittree.FS{},
+		clock:    clock,
+		actors:   map[string]*actorRec{},
+		teams:    map[teamKey]map[string]bool{},
+		teamInfo: map[teamKey]forge.TeamPrivacy{},
+		repos:    map[forge.RepoID]*repoRec{},
+		issues:   map[string]*forge.Issue{},
+		faults:   map[string]bool{},
+		trees:    map[string]*gittree.FS{},
 	}
 	f.factory = f.newActor("lightsout[bot]", forge.ActorBot)
 	f.factoryApp = fmt.Sprintf("app%d", f.next())
@@ -208,7 +217,8 @@ func (f *Forge) AddRepo(ctx context.Context, name string, issueTypes bool) (forg
 
 func (f *Forge) newRepoRec(id forge.RepoID, name string, issueTypes bool) *repoRec {
 	return &repoRec{
-		id: id, name: name, issueTypes: issueTypes, defaultRef: "refs/heads/main",
+		id: id, name: name, owner: DefaultOwner, issueTypes: issueTypes,
+		perms: map[string]forge.Permission{}, teamPerms: map[teamKey]forge.Permission{}, defaultRef: "refs/heads/main",
 		commits: map[string]*commit{}, refs: map[string]string{}, protected: map[string]bool{},
 		assigned: map[string]assignment{}, nextNumber: 1, issues: map[int]string{}, keys: map[string]string{},
 		comments: map[string]*forge.Comment{}, prs: map[int]*forge.PullRequest{}, reviews: map[string]*forge.Review{},
@@ -305,6 +315,7 @@ func (f *Forge) AddTeamMember(ctx context.Context, org, team, actorID string) er
 		return err
 	}
 	k := teamKey{org, team}
+	f.ensureTeam(k)
 	if f.teams[k] == nil {
 		f.teams[k] = map[string]bool{}
 	}
@@ -656,4 +667,149 @@ func (f *Forge) ReadFile(ctx context.Context, repo forge.RepoID, sha, path strin
 		return nil, fmt.Errorf("read %s at %s: %w", path, sha, err)
 	}
 	return b, nil
+}
+
+// SetRepoOwner sets the login of the repo's owning organization or user.
+func (f *Forge) SetRepoOwner(ctx context.Context, repo forge.RepoID, owner string) error {
+	release, err := f.acquire(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	r, err := f.repo(repo)
+	if err != nil {
+		return err
+	}
+	r.owner = owner
+	return nil
+}
+
+// SetRepoPermission sets an actor's permission on a repo. PermUnknown is ErrInvalid.
+func (f *Forge) SetRepoPermission(ctx context.Context, repo forge.RepoID, actorID string, p forge.Permission) error {
+	release, err := f.acquire(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	r, err := f.repo(repo)
+	if err != nil {
+		return err
+	}
+	if _, err := f.actorRec(actorID); err != nil {
+		return err
+	}
+	if p == forge.PermUnknown {
+		return fmt.Errorf("permission %s: %w", p, forge.ErrInvalid)
+	}
+	r.perms[actorID] = p
+	return nil
+}
+
+// SetTeamRepoPermission sets a team's permission on a repo. PermUnknown is ErrInvalid.
+func (f *Forge) SetTeamRepoPermission(ctx context.Context, repo forge.RepoID, org, team string, p forge.Permission) error {
+	release, err := f.acquire(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	r, err := f.repo(repo)
+	if err != nil {
+		return err
+	}
+	if p == forge.PermUnknown {
+		return fmt.Errorf("permission %s: %w", p, forge.ErrInvalid)
+	}
+	f.ensureTeam(teamKey{org, team})
+	r.teamPerms[teamKey{org, team}] = p
+	return nil
+}
+
+// GetRepo implements [forge.PermissionReader].
+func (f *Forge) GetRepo(ctx context.Context, repo forge.RepoID) (forge.Repo, error) {
+	release, err := f.acquire(ctx)
+	if err != nil {
+		return forge.Repo{}, err
+	}
+	defer release()
+	r, err := f.repo(repo)
+	if err != nil {
+		return forge.Repo{}, err
+	}
+	return forge.Repo{ID: r.id, Name: r.name, Owner: r.owner}, nil
+}
+
+// RepoPermission implements [forge.PermissionReader]. A revoked actor has PermNone.
+func (f *Forge) RepoPermission(ctx context.Context, repo forge.RepoID, actorID string) (forge.Permission, error) {
+	release, err := f.acquire(ctx)
+	if err != nil {
+		return forge.PermUnknown, err
+	}
+	defer release()
+	r, err := f.repo(repo)
+	if err != nil {
+		return forge.PermUnknown, err
+	}
+	a, err := f.actorRec(actorID)
+	if err != nil {
+		return forge.PermUnknown, err
+	}
+	if a.revoked {
+		return forge.PermNone, nil
+	}
+	if p, ok := r.perms[actorID]; ok {
+		return p, nil
+	}
+	return forge.PermNone, nil
+}
+
+// TeamRepoPermission implements [forge.PermissionReader].
+func (f *Forge) TeamRepoPermission(ctx context.Context, repo forge.RepoID, org, team string) (forge.Permission, error) {
+	release, err := f.acquire(ctx)
+	if err != nil {
+		return forge.PermUnknown, err
+	}
+	defer release()
+	r, err := f.repo(repo)
+	if err != nil {
+		return forge.PermUnknown, err
+	}
+	if p, ok := r.teamPerms[teamKey{org, team}]; ok {
+		return p, nil
+	}
+	return forge.PermNone, nil
+}
+
+// SetTeam creates a team or changes its privacy. PrivacyUnknown is ErrInvalid.
+func (f *Forge) SetTeam(ctx context.Context, org, team string, privacy forge.TeamPrivacy) error {
+	release, err := f.acquire(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	if privacy == forge.PrivacyUnknown {
+		return fmt.Errorf("team privacy %s: %w", privacy, forge.ErrInvalid)
+	}
+	f.teamInfo[teamKey{org, team}] = privacy
+	return nil
+}
+
+// ensureTeam makes a team exist, visible if it is new. The caller holds the lock.
+func (f *Forge) ensureTeam(k teamKey) {
+	if _, ok := f.teamInfo[k]; !ok {
+		f.teamInfo[k] = forge.PrivacyVisible
+	}
+}
+
+// GetTeam implements [forge.PermissionReader]. A team that was never created is ErrNotFound.
+func (f *Forge) GetTeam(ctx context.Context, org, team string) (forge.Team, error) {
+	release, err := f.acquire(ctx)
+	if err != nil {
+		return forge.Team{}, err
+	}
+	defer release()
+	p, ok := f.teamInfo[teamKey{org, team}]
+	if !ok {
+		return forge.Team{}, fmt.Errorf("team %s/%s: %w", org, team, forge.ErrNotFound)
+	}
+	return forge.Team{Org: org, Slug: team, Privacy: p}, nil
 }

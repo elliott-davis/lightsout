@@ -155,6 +155,13 @@ The ideator is bound by WI-19. Authorship nominates the ideator, who must be a v
 policy. A bot-opened issue has no ideator until someone binds one. A transferred issue needs a fresh binding. Any delegation is an
 audited, issue-scoped assignment.
 
+The three owner roles (`path-owner`, `code-owner`, `contract-owner`) share one mechanism in `internal/codeowners` and differ only in the paths the
+caller puts in `Target.Paths`: the read-only paths a change touches (CON-7), every changed path (CON-8), and the contract **file** paths being activated,
+such as `svc/.factory.yaml` (CON-2), which are the files GitHub's own code-owner review covers. The principal must own every path. As on GitHub, an owner
+counts only with write access to the repository: a `@user` owner needs the current login and write permission, and a `@org/team` owner needs the org to own the
+repo, a visible team (GitHub ignores secret teams), write access for the team and live membership. The role source is bound to the repo the CODEOWNERS was loaded from, is built per execution from the
+trusted base, and is never long-lived.
+
 Owner roles are checked per area. An action that spans several owner areas, such as activating a contract that touches two areas, needs one granted decision
 per area. WI-11 composes these and requires coverage of every affected area under the previously trusted ownership.
 

@@ -21,6 +21,7 @@ import (
 // optional interfaces below, and a subtest that needs one is skipped when the harness lacks it.
 type Harness interface {
 	forge.IdentityReader
+	forge.PermissionReader
 	forge.IssueReader
 	forge.IssueWriter
 	forge.PRReader
@@ -86,6 +87,16 @@ type Identities interface {
 	MarkReviewer(ctx context.Context, id string) error
 	AddTeamMember(ctx context.Context, org, team, actorID string) error
 	RemoveTeamMember(ctx context.Context, org, team, actorID string) error
+}
+
+// Permissions sets repository ownership and access. A repo starts with no access for anyone, and the harness
+// chooses the initial owner.
+type Permissions interface {
+	SetRepoOwner(ctx context.Context, repo forge.RepoID, owner string) error
+	SetRepoPermission(ctx context.Context, repo forge.RepoID, actorID string, p forge.Permission) error
+	SetTeamRepoPermission(ctx context.Context, repo forge.RepoID, org, team string, p forge.Permission) error
+	// SetTeam creates a team, or changes its privacy.
+	SetTeam(ctx context.Context, org, team string, privacy forge.TeamPrivacy) error
 }
 
 // TreeSetup configures tree reads and comparisons.
