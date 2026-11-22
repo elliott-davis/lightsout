@@ -251,3 +251,27 @@ Every reviewer brief had to spell out which layer was theirs: "the `git diff` (w
 - **Never share a mutable workspace between work items (RUN-1).** Moving another item's files aside is a workaround for a shared tree, and every workaround is a new way to corrupt it. Each work item needs its own worktree or sandbox.
 - **Verify from a fresh checkout of the exact commit (PIP-2).** A green run in the working tree, or a "clean" `git status`, doesn't prove the tree matches the commit. Only the clean-worktree runs distinguished "commit wrong" from "working copy wrong".
 - **Byte-exact path identity matters to gates.** Gates that read repo paths must take them from the git tree at a SHA, as `gittree` does, never from a host filesystem that can normalize names.
+
+## 20. An issue number written down before the issue existed
+
+**What happened.** While WI-16 was in review, the orchestrator wrote a backlog note linking a follow-up as `#13`, and then filed the issue.
+- **The collision:** the first push to `origin` had switched on Dependabot. It opened PR #13 (a `golang.org/x/text` bump) minutes earlier, and GitHub numbers issues and PRs from one sequence. The new issue became #14.
+- **How it was caught:** the orchestrator listed recent issues just before filing, saw #12 as the newest *issue*, and still predicted wrong. It noticed only because `gh issue create` printed a different URL. It then fixed the link.
+- **A second effect:** the bot's PR bumps `x/text`, which `internal/contract` pins for Unicode-version agreement (state.md). An agent that merged "routine" dependency PRs would have changed contract normalization silently.
+
+**Product implication.**
+- **Never predict a forge ID.** Issue, PR, comment and check IDs come only from the forge's response to the create call. The factory writes cross-references after creation, never before (INT-1 records on issues; NFR-6 trailers).
+- **Other actors share every forge namespace.** Bots and humans create issues, PRs and branches concurrently with the factory, so any "next number" or "latest item" reasoning is a race.
+- **Bot PRs are untrusted changes like any other (SEC-1).** A dependency bump goes through Verify, including the transitive and normalization effects in note 15, never auto-merge because a bot authored it.
+
+## 21. Cleaning up a shared test database by name prefix
+
+**What happened.** WI-10d's implementor and, later, two reviewers ran PostgreSQL tests against one shared `postgres:16-alpine` container.
+- **The cleanup:** the implementor reported that it had dropped "all `lo_*` roles from the shared container", including roles leaked by earlier tests, while other agents could have been using the same server.
+- **Why it mattered:** every agent's tests create roles with the `lo_` prefix. A prefix-wide `DROP ROLE` in the middle of another agent's run would make that run fail in a way it couldn't explain (see note 17), or would pass a test that never ran its real assertion.
+- **How it was caught:** only because the implementor mentioned it in its report. Nothing failed visibly this time.
+- **The root cause:** existing tests in `pgstore_test.go` leak roles, which tempted the agent into a global cleanup.
+
+**Product implication.**
+- **Per-run infrastructure, not shared servers (RUN-1, RUN-4).** Each verification run gets its own database server, or at least its own database, named by the factory, and it is destroyed afterwards. Agents never clean up by pattern in shared state.
+- **Tests must not leak.** A leaked fixture is a cross-run dependency. Leaks should fail the test (cleanup asserted with `t.Cleanup`), not be swept up later.
