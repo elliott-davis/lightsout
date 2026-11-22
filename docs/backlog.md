@@ -249,7 +249,9 @@ lands. Design notes for larger items live in [docs/design/](design/).
 | --- | --- | --- | --- | --- |
 | WI-19 | Intake state machine on issues | INT-1, INT-2, INT-3, INT-8, INT-11, INT-12 | WI-06, WI-10, WI-03 | todo |
 | WI-20 | Scenarios, spec and PR plan | INT-4, INT-5, INT-14, INT-15, INT-16, INT-21, FLG-1, COST-1 (estimate) | WI-19 | todo |
-| WI-21 | Holdout store | INT-6, INT-7, INT-9, AGT-2 | WI-06, WI-05 | todo |
+| WI-21 | Holdout store | INT-6, INT-7, INT-9, AGT-2 | WI-06, WI-05 | done |
+| WI-21a | Holdout store: durable PostgreSQL backend ([#18](https://github.com/elliott-davis/lightsout/issues/18)) | INT-6, INT-9, NFR-4 | WI-21, WI-10d | todo |
+| WI-21b | Holdout store: scheduler starvation, pass finality, public-path rules ([#19](https://github.com/elliott-davis/lightsout/issues/19)) | PIP-15, INT-7, INT-9 | WI-21 | todo |
 | WI-22 | Unflagged Fix authorization | INT-17, INT-10 | WI-03, WI-20 | todo |
 | WI-23 | Switch convention detection and records | FLG-2, FLG-3 | WI-08 | done |
 | WI-23a | Switch detection residual limits ([#9](https://github.com/elliott-davis/lightsout/issues/9)) | FLG-2 | WI-23 | todo |
@@ -261,11 +263,13 @@ lands. Design notes for larger items live in [docs/design/](design/).
   cover no covering contract, forbidden paths needed and multi-repo work (INT-12).
   From WI-06: implement the ideator `RoleSource`. The ideator must be a verified human who is eligible under the intake policy. A bot-opened issue has no ideator until one is bound, a transfer needs a fresh binding, and any delegation is audited. Proposal revisions are 40- or 64-hex digests, unique per subject and new on every edit, including reverts. The `decide-split` Choice is the digest of the kept set. Store the rejection comment with the state change. Decide whether submitting an idea is itself an audited decision.
   From WI-08: SetIssueType reports native or label; define precedence when a stray type: label exists. A transfer (TransferredFrom set) needs a fresh ideator binding. Splits use AddSubIssue/ListSubIssues.
+  From WI-21: implement `holdout.IntentSource` for each suite: the current approved scenario (intent) revision, whether an unapproved edit is pending, and the approved public scenario IDs. A pending edit blocks every use of the previous approval.
 - **WI-20** Ideator approval of the exact scenario revision before any spec (INT-4). Spec and plan committed under a
   factory path keyed by switch or issue ID (INT-5). The plan is a dependency graph whose first PR adds the switch, off (INT-14).
   Only the spec writer replans, every replan is logged, and replans are capped (INT-15). An explicit complete state (INT-16).
   Each scenario records its bound test layer (INT-21). Switch IDs are minted here (FLG-1). The cost estimate is recorded (COST-1).
   From WI-23: a minted switch ID must be a valid flagd and manifest key, unique per repo ignoring case. The plan's first PR (INT-14) must give exactly Compare.New == [{ID, default-off}], and every later PR references the ID.
+  From WI-21: hand-off waits on `holdout.Store.Status` for the suite: an active revision bound to the current approved intent, or the public scenario IDs that block it (INT-9). QE chooses each binding's test layer (`Binding.Layer`, INT-21).
 - **WI-21** Only QE and the scenario reviewer can read a suite. The Acceptance runner gets read-only access scoped to
   one run and suite revision. Coder, PR reviewer and customer CI identities are denied (INT-6, AGT-2). Suite revisions
   are versioned separately from intent, and a public regression PR leaks nothing (INT-7). Scenario review against the exact
@@ -290,6 +294,12 @@ lands. Design notes for larger items live in [docs/design/](design/).
 - **WI-24** Runs only on a complete plan with every PR merged through Verify. It records the candidate SHA, artifact
   digest, switch config, suite and intent revisions and per-scenario results (PIP-3). A failure keeps the feature dark,
   returns only redacted feedback, freezes the suite revision and caps repairs (PIP-15).
+  From WI-21:
+    - Mint grants with `holdout.Store.IssueGrant` from a run record pinning candidate SHA, artifact digest, switch config, intent and suite revisions; a replacement attempt fences the old one, and only the current attempt may `RecordOutcome`. Outcome recording and freeze-after-failure already exist in internal/holdout.
+    - The private reader and driver run outside the candidate's sandbox; candidate code never sees the reader, its credentials or private runner output (AGT-2). Coders get only the four PIP-15 fields, built from `Outcome` with a fixed symptom vocabulary.
+    - Own the public regression PR flow (INT-7): a fresh QE session with only public intent and repo context writes it; the scenario reviewer runs `LeakCheck` and reviews the exact diff before the first forge write; the disclosed cases are recorded, and a requalification run needs `AttestCoverage` for its revision.
+    - Requires WI-21a (durable holdout backend) before the first real Acceptance run; no memory fallback.
+    - A run is final only when every opened attempt has an outcome or is past its `ReportBy`: a fenced attempt may still record a failure after the current attempt passed ([#19](https://github.com/elliott-davis/lightsout/issues/19)). Set `holdout.Config.MaxRunDuration` from install config.
 - **WI-25** An immutable manifest pins the source commit, verified artifact digest, policy revision, release defaults,
   complete flag values and dependencies. Changing any pinned input invalidates qualification.
   From WI-23: "complete resolved flag values" means every key in switches.Detect at the manifest's source commit has a value. Refuse when Detect reports problems. Pin a hash of the detector's canonical per-key view in the manifest; a change to the Set invalidates qualification.
@@ -325,6 +335,7 @@ lands. Design notes for larger items live in [docs/design/](design/).
   Reviewers are read-only (SEC-3).
   From WI-08: enforce PushPolicy on the real write path. Coder credentials never carry the `workflows` scope. Evaluate the deny paths over the diff from the trusted base, never over the listed paths, and require descent from that base. The trusted base must be the base branch head or reachable from it. Push-triggered workflows on `factory/*` with secrets need CI-side controls.
   From WI-07: enforce egress exactly as Role().Egress.Hosts. Inject gateway credentials only for their exact host and METHOD /path, and never percent-decode. Deny at the gateway any hostname that resolves to link-local, loopback or unspecified addresses. Define a closed tool-permission vocabulary and reject write or merge permissions on reviewer roles (SEC-3) and on protected branches (SEC-2).
+  From WI-21: implement `holdout.Verifier`: a workload's role, repo, principal, session and assignment from the factory's own workload identity, never from caller input. QE and scenario-reviewer workloads carry an assignment naming their suite; runners carry their run's assignment.
 - **WI-31** Bare-mode Claude Code and factory-supplied Codex config. A fixture checkout plants hooks, MCP config and
   settings, and the test asserts none of them load (SEC-9). Inner-loop results are never gate results (AGT-1). A recipe is
   accepted only after it reproduces a green CI result, with CI as the fallback (AGT-8).
