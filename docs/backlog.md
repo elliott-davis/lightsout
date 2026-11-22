@@ -27,7 +27,7 @@ lands. Design notes for larger items live in [docs/design/](design/).
 | WI-02 | Contract schema, parsing and discovery | CON-11, CON-4, CON-1 | — | done |
 | WI-03 | Effective contract resolver and relational validation | CON-3, CON-5, CON-7, CON-9, CON-12, AGD-3, SEC-5 | WI-01, WI-02 | todo |
 | WI-04 | Incremental validation, explain, gate registry check, CLI | CON-13, CON-4 | WI-03 | todo |
-| WI-05 | Append-only audit log | NFR-4, RUN-5, AGT-6 | — | todo |
+| WI-05 | Append-only audit log | NFR-4, RUN-5, AGT-6 | — | done |
 | WI-06 | Identities, roles and revision-bound decisions | SEC-10, NFR-5 | WI-05 | todo |
 | WI-07 | Install config, role profiles and admission | RUN-6, AGT-7, NFR-2, SEC-1, CON-9, CON-5 | WI-03 | todo |
 
@@ -46,11 +46,16 @@ lands. Design notes for larger items live in [docs/design/](design/).
   hand-built ones. Document that `*.pem` is anchored and doesn't match `certs/key.pem`.
 - **WI-04** Incremental validation of a contract with its ancestors and descendants; an explain command
   that shows each effective value and its source (CON-13); registered-identity and revision check against a consumer-defined registry (CON-4).
-- **WI-05** `internal/audit`: an append-only interface with no update or delete, hash-chained entries, and an actor workload
-  identity, template version and change ID on every entry. In-memory and file-backed stores first; PostgreSQL arrives with WI-10.
+- **WI-05** `internal/audit`: an append-only interface with no update or delete, and hash-chained entries. Every entry
+  has an actor and a subject (change, issue or install). Agent and factory entries carry the template or build version
+  (RUN-5). Every agent tool call, model call and repo write names a change or, before a PR exists, an issue (AGT-6). A
+  `link` entry ties a change to the issue it came from. In-memory and file-backed stores first; PostgreSQL arrives with WI-10.
+  The chain is unkeyed: a deliberate rewrite or truncation is caught only by `VerifyAgainst` with a checkpoint kept outside the log.
 - **WI-06** `internal/authz`: forge identity, role, scope (repo or install) and the exact revision or digest a
   decision binds to. It rechecks at execution against a current role source, and rejects edited, copied, quoted, bot,
   stale, revoked and cross-repo decisions. Every decision, granted or denied, is audited. Negative tests per SEC-11.
+  WI-05 already carries the evidence shape (`audit.Decision`, `ActorExternal` for bot and unverified principals); WI-06
+  enforces that `Decision.Revision` is an immutable revision or digest.
 - **WI-07** `internal/install`: install config with defaults for timers and caps (AGT-5, INT-15, PIP-15, REC-3, COST-2/3/4/7),
   the factory baseline gates (SEC-4 identities) and core reviewers, one pinned runtime, harness and model profile per enabled
   role (RUN-6, AGT-7), and a qualification record check that runs before admission (NFR-2 data). Validation fails any role
@@ -74,6 +79,8 @@ lands. Design notes for larger items live in [docs/design/](design/).
 - **WI-09** Parse CODEOWNERS (gitignore semantics) at a trusted revision and resolve each path's current owners.
 - **WI-10** PostgreSQL-backed state for issues, changes, features and trains; idempotent webhook ingestion with
   signature checks; one authorization path for issue events, checks, callbacks, API and admin actions (NFR-5).
+  The PostgreSQL audit backend implements `audit.Backend` and serializes head selection and insert in the transaction
+  that records the state change. Persist audit head checkpoints outside the log's storage and run `VerifyAgainst` at startup.
   The first HTTP surface: write its OpenAPI document first and serve it with chi (AGENTS.md, API first). Generate
   types and handler interfaces with oapi-codegen's chi strict-server output (tool pinned in `tools/go.mod`, plus its
   runtime module); justify both in the PR description.
@@ -180,6 +187,9 @@ lands. Design notes for larger items live in [docs/design/](design/).
 
 - **WI-28** `internal/runtime` interface. Only `internal/runtime/kagent` imports kagent (RUN-8, enforced by depguard).
   Sessions run in Agent Substrate sandboxes, never in plain containers (RUN-2). Workload identity reaches the audit log (RUN-5).
+  AGT-6 completeness lives here and in WI-30/31: every tool call (MCP via agentgateway), model call and repo write emits
+  one audit entry with the session's workload identity and its change subject once the change exists. Test it with a fake
+  session that makes one of each and asserts exactly three entries.
 - **WI-29** Templates, harnesses and the install manifest live in git, pinned by digest. Validate against an
   offline mirror (RUN-1). Preflight names each unmet prerequisite (RUN-9). A BOM covers every component (NFR-8).
 - **WI-30** agentgateway deny-by-default egress per role, with blocked calls logged (RUN-3). Credentials are injected at egress,
