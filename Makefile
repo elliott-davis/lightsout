@@ -11,7 +11,7 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo deve
 LDFLAGS := -s -w -X $(PKG)/internal/version.Version=$(VERSION)
 BASE    ?= origin/main
 
-.PHONY: help tools build fmt fmt-files fmt-check lint lint-fix test cover vuln tidy-check actionlint dco check ci clean
+.PHONY: help tools build fmt fmt-files fmt-check lint lint-fix test test-postgres cover vuln tidy-check actionlint dco check ci clean
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  %-12s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -44,6 +44,14 @@ lint-fix: ## Run golangci-lint with auto-fix
 
 test: ## Run tests with race detector
 	go test -race -shuffle=on -count=1 ./...
+
+test-postgres: ## Run the store tests against LIGHTSOUT_TEST_POSTGRES_URL; any skipped test fails
+	@test -n "$$LIGHTSOUT_TEST_POSTGRES_URL" || { echo "LIGHTSOUT_TEST_POSTGRES_URL is not set" >&2; exit 2; }
+	@out=$$(mktemp); trap 'rm -f "$$out"' EXIT; rc=0; \
+	go test -race -shuffle=on -count=1 -v ./internal/store/... > "$$out" 2>&1 || rc=$$?; \
+	if [ "$$rc" -ne 0 ]; then cat "$$out"; exit "$$rc"; fi; \
+	grep -E '^(ok|FAIL|-test.shuffle)' "$$out"; \
+	if grep -q -- '--- SKIP' "$$out"; then grep -- '--- SKIP' "$$out"; echo "PostgreSQL store tests were skipped" >&2; exit 1; fi
 
 cover: ## Write coverage.out and print a summary
 	go test -race -count=1 -coverprofile=coverage.out ./...

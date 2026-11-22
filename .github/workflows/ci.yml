@@ -43,6 +43,36 @@ jobs:
             tools/go.sum
       - run: make test
 
+  # The store's PostgreSQL tests skip without a database, so this job supplies one and fails if any of them skip.
+  postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine@sha256:20edbde7749f822887a1a022ad526fde0a47d6b2be9a8364433605cf65099416
+        env:
+          POSTGRES_PASSWORD: lightsout-ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            tools/go.sum
+      - run: make test-postgres
+        env:
+          LIGHTSOUT_TEST_POSTGRES_URL: postgres://postgres:lightsout-ci@localhost:5432/postgres?sslmode=disable
+
   vuln:
     runs-on: ubuntu-latest
     steps:
