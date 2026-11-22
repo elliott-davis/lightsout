@@ -1,0 +1,143 @@
+{
+  "revision": "a4ac7e7ccc7544f12d78ba75fd84289a903511f3",
+  "path": "src/checkout/pay.go",
+  "covered": true,
+  "stack": [
+    ".factory.yaml",
+    "src/.factory.yaml",
+    "src/checkout/.factory.yaml"
+  ],
+  "access": {
+    "value": "writable",
+    "source": ".factory.yaml"
+  },
+  "protected": false,
+  "sensitive": {
+    "value": true,
+    "sources": [
+      ".factory.yaml"
+    ]
+  },
+  "generated": {
+    "value": false,
+    "source": "src/.factory.yaml"
+  },
+  "lightsOn": {
+    "value": true,
+    "sources": [
+      "src/.factory.yaml"
+    ]
+  },
+  "switchStaleDays": {
+    "value": 20,
+    "source": ".factory.yaml"
+  },
+  "switchAbandonedDays": {
+    "value": 60,
+    "source": "src/.factory.yaml"
+  },
+  "reviewBudgetLines": {
+    "value": 250,
+    "source": "src/.factory.yaml"
+  },
+  "verifyGates": [
+    {
+      "name": "build",
+      "producerId": "github-app:1",
+      "workflowId": "7",
+      "workflowRevision": "a4ac7e7ccc7544f12d78ba75fd84289a903511f3",
+      "checkId": "build",
+      "mandatory": true,
+      "owner": "contract",
+      "sources": [
+        ".factory.yaml"
+      ]
+    },
+    {
+      "name": "pay",
+      "producerId": "github-app:1",
+      "workflowId": "7",
+      "workflowRevision": "a4ac7e7ccc7544f12d78ba75fd84289a903511f3",
+      "checkId": "pay",
+      "mandatory": true,
+      "owner": "contract",
+      "sources": [
+        "src/checkout/.factory.yaml"
+      ]
+    },
+    {
+      "name": "secret-scan",
+      "producerId": "github-app:1",
+      "workflowId": "900",
+      "workflowRevision": "a4ac7e7ccc7544f12d78ba75fd84289a903511f3",
+      "checkId": "secret-scan",
+      "mandatory": true,
+      "owner": "factory",
+      "sources": [
+        "factory baseline"
+      ]
+    }
+  ],
+  "unionGates": [
+    {
+      "name": "integration",
+      "producerId": "github-app:1",
+      "workflowId": "8",
+      "workflowRevision": "a4ac7e7ccc7544f12d78ba75fd84289a903511f3",
+      "checkId": "integration",
+      "mandatory": false,
+      "owner": "contract",
+      "sources": [
+        ".factory.yaml"
+      ]
+    },
+    {
+      "name": "smoke",
+      "producerId": "github-app:1",
+      "workflowId": "900",
+      "workflowRevision": "a4ac7e7ccc7544f12d78ba75fd84289a903511f3",
+      "checkId": "smoke",
+      "mandatory": true,
+      "owner": "factory",
+      "sources": [
+        "factory baseline"
+      ]
+    }
+  ],
+  "oracles": [
+    {
+      "name": "checkout-oracle",
+      "producerId": "github-app:1",
+      "workflowId": "9",
+      "workflowRevision": "a4ac7e7ccc7544f12d78ba75fd84289a903511f3",
+      "checkId": "checkout-contract",
+      "observables": [
+        "responses",
+        "writes"
+      ],
+      "sources": [
+        "src/.factory.yaml"
+      ]
+    }
+  ],
+  "reviewers": [
+    {
+      "role": "payments-specialist",
+      "sources": [
+        ".factory.yaml"
+      ]
+    },
+    {
+      "role": "pr-reviewer",
+      "sources": [
+        "factory baseline"
+      ]
+    },
+    {
+      "role": "security-reviewer",
+      "sources": [
+        "factory baseline"
+      ]
+    }
+  ]
+}

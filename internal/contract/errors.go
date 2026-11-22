@@ -62,21 +62,34 @@ type Problem struct {
 	Message string
 }
 
-// String renders the problem as "file: field: [code] message". The text
+// String renders the problem as `"file" "field": [code] message`, with an
+// empty File or Field left out. File and Field are untrusted repo text,
+// so they are quoted: a line never starts with attacker text, and a ':' or '['
+// inside a directory name cannot pass for the field or the code. The text
 // fields of a Problem in a ValidationError are already escaped (see display),
-// so String does not escape them again.
+// so String only adds the quotes and escapes a '"' inside them.
 func (p Problem) String() string {
 	var b strings.Builder
 	if p.File != "" {
-		b.WriteString(p.File)
-		b.WriteString(": ")
+		b.WriteString(quoteEscaped(p.File))
 	}
 	if p.Field != "" {
-		b.WriteString(p.Field)
+		if p.File != "" {
+			b.WriteByte(' ')
+		}
+		b.WriteString(quoteEscaped(p.Field))
+	}
+	if p.File != "" || p.Field != "" {
 		b.WriteString(": ")
 	}
 	fmt.Fprintf(&b, "[%s] %s", p.Code, p.Message)
 	return b.String()
+}
+
+// quoteEscaped wraps text that display has already made printable in double
+// quotes, escaping any '"' in it. (display escapes backslashes.)
+func quoteEscaped(s string) string {
+	return `"` + strings.ReplaceAll(s, `"`, `\"`) + `"`
 }
 
 // ValidationError carries every problem found. Callers branch on Problem.Code
@@ -128,7 +141,8 @@ func newValidationError(problems []Problem) *ValidationError {
 // display makes untrusted text safe to print on one line. It escapes every
 // rune that is not printable or is a format character (so newlines, escape
 // sequences and bidi overrides cannot forge output) and a literal backslash
-// (so the text \u000a in input cannot pass for an escaped newline). It returns
+// (so the text \u000a in input cannot pass for an escaped newline) and '#'
+// (so no "##[command" can reach a CI log). It returns
 // at most limit bytes including the ellipsis that marks a cut, which falls on a
 // rune boundary.
 func display(s string, limit int) string {
@@ -143,6 +157,9 @@ func display(s string, limit int) string {
 			piece = fmt.Sprintf(`\x%02x`, s[0])
 		case r == '\\':
 			piece = `\\`
+		case r == '#':
+			// GitHub's legacy runner parser finds "##[" anywhere in a line.
+			piece = `\x23`
 		case !unicode.IsPrint(r) || unicode.Is(unicode.Cf, r):
 			if r <= 0xffff {
 				piece = fmt.Sprintf(`\u%04x`, r)
@@ -164,11 +181,17 @@ func display(s string, limit int) string {
 	return b.String()
 }
 
+// EscapeText makes untrusted text, such as an error message that carries a
+// repository path, safe to print on one line: it escapes control and format
+// characters, invalid UTF-8, backslashes and '#' as display does, and bounds
+// the result. The CLI applies it to every error it prints.
+func EscapeText(s string) string { return display(s, 8192) }
+
 // quote renders untrusted text safely and bounded.
 func quote(s string) string {
 	const maxLen = 100
 	if len(s) > maxLen {
 		s = strings.ToValidUTF8(s[:maxLen], "") + "..."
 	}
-	return fmt.Sprintf("%q", s)
+	return strings.ReplaceAll(fmt.Sprintf("%q", s), "#", `\x23`)
 }

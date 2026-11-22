@@ -106,31 +106,60 @@ func Compile(set *Set, b Baseline, d Defaults) (*Policy, error) {
 }
 
 func compile(set *Set, b Baseline, d Defaults, limits budgets) (*Policy, error) {
+	p, problems, err := analyze(set, b, d, limits, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(problems) > 0 {
+		return nil, newValidationError(problems)
+	}
+	return p, nil
+}
+
+// analyze is the one path Compile and ValidateChanged share: build the levels,
+// run the per-contract and relational checks, and build the stacks. scope nil
+// means every contract (Compile). Otherwise only the directories in scope are
+// schema-checked and validated, and the problems of the others are dropped:
+// they were validated at their trusted revision (CON-13).
+func analyze(set *Set, b Baseline, d Defaults, limits budgets, scope []string) (*Policy, []Problem, error) {
 	if set == nil {
-		return nil, errors.New("compile policy: nil contract set")
+		return nil, nil, errors.New("compile policy: nil contract set")
 	}
 	parser, err := NewParser()
 	if err != nil {
-		return nil, fmt.Errorf("compile policy: %w", err)
+		return nil, nil, fmt.Errorf("compile policy: %w", err)
 	}
 	if err = checkBaseline(parser, b); err != nil {
-		return nil, fmt.Errorf("compile policy: %w", err)
+		return nil, nil, fmt.Errorf("compile policy: %w", err)
 	}
 	if err = checkDefaults(d); err != nil {
-		return nil, fmt.Errorf("compile policy: %w", err)
+		return nil, nil, fmt.Errorf("compile policy: %w", err)
 	}
 	protected, err := compileProtected(b.Protected)
 	if err != nil {
-		return nil, fmt.Errorf("compile policy: %w", err)
+		return nil, nil, fmt.Errorf("compile policy: %w", err)
+	}
+	dirs := set.Dirs()
+	if scope != nil {
+		dirs = scope
 	}
 	// NewSet accepts hand-built contracts, so check each against the schema too.
 	var problems []Problem
-	for _, dir := range set.Dirs() {
-		c, _ := set.Get(dir)
+	for _, dir := range dirs {
+		c, ok := set.Get(dir)
+		if !ok {
+			continue
+		}
 		problems = append(problems, parser.validateContract(filePath(dir), c)...)
 	}
 	t, tp := buildTree(set)
-	problems = append(problems, tp...)
+	if scope != nil {
+		in := make(map[string]bool, len(scope))
+		for _, dir := range scope {
+			in[filePath(dir)] = true
+		}
+		tp = slices.DeleteFunc(tp, func(pr Problem) bool { return !in[pr.File] })
+	}
 	p := &Policy{
 		revision:  set.Revision(),
 		tree:      t,
@@ -142,13 +171,14 @@ func compile(set *Set, b Baseline, d Defaults, limits budgets) (*Policy, error) 
 
 		compileBudget: limits.compile, forPathBudget: limits.forPath, resolveBudget: limits.resolve,
 	}
-	vp, spent := p.validate(t.dirs)
-	p.compileSpent = spent
-	problems = append(problems, vp...)
-	if len(problems) > 0 {
-		return nil, newValidationError(problems)
+	problems = append(problems, tp...)
+	validateDirs := t.dirs
+	if scope != nil {
+		validateDirs = scope
 	}
-	return p, nil
+	vp, spent := p.validate(validateDirs)
+	p.compileSpent = spent
+	return p, append(problems, vp...), nil
 }
 
 // compileProtected compiles the contract file names and the baseline's
@@ -186,7 +216,7 @@ func checkBaseline(parser *Parser, b Baseline) error {
 	for _, stage := range []struct {
 		name  string
 		gates []Gate
-	}{{"verify", b.Verify}, {"union", b.Union}} {
+	}{{stageVerify, b.Verify}, {stageUnion, b.Union}} {
 		seen := map[GateKey]bool{}
 		for i, g := range stage.gates {
 			if !g.Mandatory {

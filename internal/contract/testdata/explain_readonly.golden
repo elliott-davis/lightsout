@@ -1,0 +1,19 @@
+revision: "a4ac7e7ccc7544f12d78ba75fd84289a903511f3"
+path: "api/protos/a.proto"
+covered: true
+stack: ".factory.yaml"
+access: read-only (source: ".factory.yaml")
+protected: false
+sensitive: false (sources: none)
+generated: false (source: ".factory.yaml")
+lightsOn: false (sources: none)
+switchStaleDays: 20 (source: ".factory.yaml")
+switchAbandonedDays: 90 (source: "install default")
+reviewBudgetLines: 400 (source: "install default")
+verify gate: name="build" producer="github-app:1" workflow="7" check="build" revision="a4ac7e7ccc7544f12d78ba75fd84289a903511f3" mandatory=true owner="contract" sources: ".factory.yaml"
+verify gate: name="secret-scan" producer="github-app:1" workflow="900" check="secret-scan" revision="a4ac7e7ccc7544f12d78ba75fd84289a903511f3" mandatory=true owner="factory" sources: "factory baseline"
+union gate: name="integration" producer="github-app:1" workflow="8" check="integration" revision="a4ac7e7ccc7544f12d78ba75fd84289a903511f3" mandatory=false owner="contract" sources: ".factory.yaml"
+union gate: name="smoke" producer="github-app:1" workflow="900" check="smoke" revision="a4ac7e7ccc7544f12d78ba75fd84289a903511f3" mandatory=true owner="factory" sources: "factory baseline"
+reviewer: "payments-specialist" sources: ".factory.yaml"
+reviewer: "pr-reviewer" sources: "factory baseline"
+reviewer: "security-reviewer" sources: "factory baseline"

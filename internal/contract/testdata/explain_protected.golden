@@ -1,0 +1,20 @@
+revision: "a4ac7e7ccc7544f12d78ba75fd84289a903511f3"
+path: "src/.factory.yaml"
+covered: true
+stack: ".factory.yaml", "src/.factory.yaml"
+access: forbidden (source: "factory protected path")
+protected: true
+sensitive: false (sources: none)
+generated: false (source: "src/.factory.yaml")
+lightsOn: true (sources: "src/.factory.yaml")
+switchStaleDays: 20 (source: ".factory.yaml")
+switchAbandonedDays: 60 (source: "src/.factory.yaml")
+reviewBudgetLines: 250 (source: "src/.factory.yaml")
+verify gate: name="build" producer="github-app:1" workflow="7" check="build" revision="a4ac7e7ccc7544f12d78ba75fd84289a903511f3" mandatory=true owner="contract" sources: ".factory.yaml"
+verify gate: name="secret-scan" producer="github-app:1" workflow="900" check="secret-scan" revision="a4ac7e7ccc7544f12d78ba75fd84289a903511f3" mandatory=true owner="factory" sources: "factory baseline"
+union gate: name="integration" producer="github-app:1" workflow="8" check="integration" revision="a4ac7e7ccc7544f12d78ba75fd84289a903511f3" mandatory=false owner="contract" sources: ".factory.yaml"
+union gate: name="smoke" producer="github-app:1" workflow="900" check="smoke" revision="a4ac7e7ccc7544f12d78ba75fd84289a903511f3" mandatory=true owner="factory" sources: "factory baseline"
+oracle: name="checkout-oracle" producer="github-app:1" workflow="9" check="checkout-contract" revision="a4ac7e7ccc7544f12d78ba75fd84289a903511f3" observables="responses", "writes" sources: "src/.factory.yaml"
+reviewer: "payments-specialist" sources: ".factory.yaml"
+reviewer: "pr-reviewer" sources: "factory baseline"
+reviewer: "security-reviewer" sources: "factory baseline"

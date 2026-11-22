@@ -15,6 +15,8 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/google/go-cmp/cmp"
 )
@@ -421,4 +423,86 @@ func TestLoad_IOErrorIsWrappedNotAProblem(t *testing.T) { // CON-1
 	if !errors.Is(err, boom) || errors.As(err, &ve) || set != nil {
 		t.Errorf("set = %v, err = %v, want wrapped I/O error and no set", set, err)
 	}
+}
+
+// hostilePath holds invalid UTF-8, a newline, a workflow command, an escape
+// sequence and a legacy command.
+const hostilePath = "evil\xff\n::error x::y\n\x1b[2K##[error]z"
+
+// failingFS is a MapFS whose chosen operations fail with a *fs.PathError that
+// carries hostilePath, as os.DirFS does with a real path.
+type failingFS struct {
+	fstest.MapFS
+	failReadDir string
+	failOpen    string
+}
+
+func (f failingFS) ReadDir(name string) ([]fs.DirEntry, error) {
+	if name == f.failReadDir {
+		return nil, &fs.PathError{Op: "readdirent", Path: hostilePath, Err: errors.New("permission denied")}
+	}
+	return f.MapFS.ReadDir(name)
+}
+
+func (f failingFS) Open(name string) (fs.File, error) {
+	if name == f.failOpen {
+		return nil, &fs.PathError{Op: "open", Path: hostilePath, Err: errors.New("permission denied")}
+	}
+	return f.MapFS.Open(name)
+}
+
+func requirePlain(t *testing.T, what, s string) {
+	t.Helper()
+	for _, r := range s {
+		if !unicode.IsPrint(r) || unicode.Is(unicode.Cf, r) || r == '#' || r == utf8.RuneError {
+			t.Errorf("%s holds the raw rune %U: %q", what, r, s)
+			return
+		}
+	}
+}
+
+func TestLoad_HostilePathErrorsCannotReachOutput(t *testing.T) { // SEC-1
+	t.Parallel()
+	bad := "d" + hostilePath
+	base := fstest.MapFS{
+		".factory.yaml":     file(head + writableAll),
+		bad + "/other.txt":  file("x"),
+		"svc/.factory.yaml": file(head),
+	}
+	t.Run("an unreadable directory is a problem", func(t *testing.T) {
+		t.Parallel()
+		_, err := Load(t.Context(), failingFS{MapFS: base, failReadDir: bad}, newParser(t), rev40)
+		ps := problemsFrom(t, err)
+		if len(ps) != 1 || ps[0].Code != CodeInvalidPath {
+			t.Fatalf("problems = %v, want one invalid-path", ps)
+		}
+		requirePlain(t, "Error", err.Error())
+		requirePlain(t, "String", ps[0].String())
+	})
+	t.Run("an I/O error wraps only the cause", func(t *testing.T) {
+		t.Parallel()
+		_, err := Load(t.Context(), failingFS{MapFS: base, failOpen: "svc/.factory.yaml"}, newParser(t), rev40)
+		var ve *ValidationError
+		if err == nil || errors.As(err, &ve) {
+			t.Fatalf("err = %v, want an I/O error", err)
+		}
+		var pe *fs.PathError
+		if errors.As(err, &pe) {
+			t.Errorf("the error still wraps a *fs.PathError: %v", pe)
+		}
+		requirePlain(t, "Error", err.Error())
+		if !strings.Contains(err.Error(), "permission denied") {
+			t.Errorf("err = %v, want the cause kept", err)
+		}
+	})
+	t.Run("a hostile directory with a contract problem", func(t *testing.T) {
+		t.Parallel()
+		m := fstest.MapFS{".factory.yaml": file(head + writableAll), bad + "/.factory.yml": file(head)}
+		_, err := Load(t.Context(), m, newParser(t), rev40)
+		ps := problemsFrom(t, err)
+		if len(ps) != 1 {
+			t.Fatalf("problems = %v", ps)
+		}
+		requirePlain(t, "String", ps[0].String())
+	})
 }

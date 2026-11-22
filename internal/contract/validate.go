@@ -24,6 +24,9 @@ const (
 	fieldPaths    = "paths"
 	fieldWritable = "writable"
 	fieldReadOnly = "readOnly"
+	fieldGates    = "gates"
+	stageVerify   = "verify"
+	stageUnion    = "union"
 )
 
 // tree is the compiled contracts of a Set. A contract is identified by the
@@ -319,7 +322,25 @@ func (p *Policy) validate(dirs []string) ([]Problem, int64) {
 		scope[dir] = true
 	}
 	if !p.buildStacks(c, scope) {
-		return p.finish(c)
+		// Defense in depth. The scope is closed under key-ancestors, so a
+		// contract in scope never sits under an unbuilt stack that is outside
+		// it, and that closure is the primary guarantee. If a caller breaks
+		// it anyway, a contract in scope with no stack must not pass
+		// unchecked: report it. A stack that failed outside the scope is not
+		// ours to report and does not stop the checks inside it.
+		if len(c.problems) == 0 && !c.exhausted {
+			for _, j := range jobs {
+				if _, collides := p.tree.collide[j.l.dir]; j.l.data == nil && !collides {
+					c.problems = append(c.problems, Problem{
+						File: j.l.file, Code: CodeTooMany,
+						Message: "the stack of this contract could not be built, so it was not validated",
+					})
+				}
+			}
+		}
+		if len(c.problems) > 0 || c.exhausted {
+			return p.finish(c)
+		}
 	}
 	for _, j := range jobs {
 		if c.full() {
@@ -377,8 +398,8 @@ func (p *Policy) validateLevel(c *collector, l *level, anc []*level) {
 		v.checkLightsOn(a)
 	}
 	v.checkOracles(anc)
-	v.checkGates(0, "verify", l.verify)
-	v.checkGates(1, "union", l.union)
+	v.checkGates(0, stageVerify, l.verify)
+	v.checkGates(1, stageUnion, l.union)
 	for i, name := range l.agents {
 		if !p.known[name] {
 			v.addf(CodeUnknownAgent, []string{"agents", "verify", strconv.Itoa(i)}, "unknown agent %s", quote(name))
@@ -582,7 +603,7 @@ func (v *validation) checkOracles(anc []*level) {
 	}
 	for _, a := range anc {
 		if a.oracle != nil && a.oracle.Key() == o.Key() && a.oracle.WorkflowRevision != o.WorkflowRevision {
-			v.addf(CodeConflict, []string{"gates", "darkMergeOracle"},
+			v.addf(CodeConflict, []string{fieldGates, "darkMergeOracle"},
 				"oracle %s is pinned to a different revision than in %s; two pins on one path can never both pass",
 				quote(o.CheckID), quote(a.file))
 		}
@@ -604,7 +625,7 @@ func (v *validation) checkGates(stage int, name string, own []Gate) {
 		if !v.c.spend(1, v.l.file) {
 			return
 		}
-		field := []string{"gates", name, strconv.Itoa(i)}
+		field := []string{fieldGates, name, strconv.Itoa(i)}
 		if seen[g.Key()] {
 			v.addf(CodeConflict, field, "gate %s is declared more than once in this contract", quote(g.CheckID))
 		}

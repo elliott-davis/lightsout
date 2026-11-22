@@ -27,7 +27,8 @@ lands. Design notes for larger items live in [docs/design/](design/).
 | WI-02 | Contract schema, parsing and discovery | CON-11, CON-4, CON-1 | — | done |
 | WI-03 | Effective contract resolver and relational validation | CON-3, CON-5, CON-7, CON-9, CON-12, AGD-3, SEC-5 | WI-01, WI-02 | done |
 | WI-03a | Bound cross-stack source merging in Resolve | CON-3 (availability), SEC-1 | WI-03 | todo |
-| WI-04 | Incremental validation, explain, gate registry check, CLI | CON-13, CON-4 | WI-03 | todo |
+| WI-04 | Incremental validation, explain, gate registry check, CLI | CON-13, CON-4 | WI-03 | done |
+| WI-04a | Incremental scope versus the whole-set compile budget | CON-13 (availability) | WI-04 | todo |
 | WI-05 | Append-only audit log | NFR-4, RUN-5, AGT-6 | — | done |
 | WI-06 | Identities, roles and revision-bound decisions | SEC-10, NFR-5 | WI-05 | done |
 | WI-07 | Install config, role profiles and admission | RUN-6, AGT-7, NFR-2, SEC-1, CON-9, CON-5 | WI-03 | todo |
@@ -55,6 +56,10 @@ lands. Design notes for larger items live in [docs/design/](design/).
 - **WI-04** Incremental validation of a contract with its ancestors and descendants; an explain command
   that shows each effective value and its source (CON-13); registered-identity and revision check against a consumer-defined registry (CON-4).
   From WI-03: `ValidateChanged` wraps `Policy.validate(dirs)`. The scope is the changed contracts, their dirKey ancestors and descendants, and any directory whose key collides with them (a parent re-pin makes descendants conflict). `Explain` surfaces `AccessSource`, `SensitiveSources`, `LightsOnSources`, `Obligation.Sources` and `Valued.Source`, all of which already exist, and must escape the raw repo path text they carry. `CheckGates` covers the baseline gates too. `buildStacks` sets no problem when a contract over the gate cap lies outside a partial scope: with incremental scopes, always record a problem or fail closed.
+- **WI-04a** WI-04 follow-up (availability only). The compile work budget is shared across the whole set. Sibling contracts that each pass a scoped
+  `ValidateChanged` can exceed it together, so the merged policy no longer compiles and the factory fails closed for the repo.
+  Fix: per-contract budgets, or store the trusted spend with the trust digest and charge the scoped delta. Add a test where the siblings fit
+  individually and fail together, and assert both paths agree. Until then, WI-11 runs a full Compile before activation.
 - **WI-05** `internal/audit`: an append-only interface with no update or delete, and hash-chained entries. Every entry
   has an actor and a subject (change, issue or install). Agent and factory entries carry the template or build version
   (RUN-5). Every agent tool call, model call and repo write names a change or, before a PR exists, an issue (AGT-6). A
@@ -71,6 +76,7 @@ lands. Design notes for larger items live in [docs/design/](design/).
   that combines untrusted input, secrets and open egress (SEC-1).
   From WI-06: supply `authz.Config` (`Forge`, `InstallID`, per-operation `Expiry` with none as the default, `DenialAuditTimeout`). Define the install's admin principals by forge and stable ID, never by login, and who may change that list. Decide whether install-config changes go through authz (the PRD names "admin" in SEC-6 but only "Enterprise IT" in the roles table).
   From WI-03: supply `contract.Baseline` (mandatory gates, `Reviewers`, `PRReviewer` distinct from `SecurityReviewer`, `KnownAgents`, `Protected` patterns such as `.github/workflows/**` and `CODEOWNERS`) and `contract.Defaults` (each at least 1). `Compile` validates them, but install-time validation should report errors earlier and more clearly.
+  From WI-04: back contract.GateRegistry from install config (registered {producerId, workflowId, workflowRevision, checkId}; no empty fields; 40/64 lowercase hex). Any change to the baseline, defaults, KnownAgents or the registry triggers a full Compile plus CheckGates across every managed repo and reports failures without silently deactivating. Replace the CLI's interim defaults in cmd/factory/contract.go (baseline(), defaults()) with --install so they can't drift.
 
 ## Phase 2: forge boundary and control-plane state
 
@@ -128,6 +134,7 @@ lands. Design notes for larger items live in [docs/design/](design/).
   contract load closed.
   From WI-06: use `authz.OpActivateContract` with `Target.Revision` set to the contract proposal revision and `Paths` set to the area. Require one grant per affected owner area under the previously trusted CODEOWNERS. Test that a proposal whose own CODEOWNERS edit would make the approver an owner is denied.
   From WI-03: protected-path classification already exists (`PathPolicy.Protected`; contract files and `Baseline.Protected` are always Forbidden). Reuse it; don't build a second matcher. Bind activation to `Effective.Revision`.
+  From WI-04: validate a contract proposal with ValidateChanged plus the registry in one call, bound to the proposal revision. Derive changedDirs from the forge diff between the trusted and proposal revisions, never from the PR text: added, edited, deleted and renamed contracts, both sides of a rename. Pass dirs, not file paths. Misnamed, case-variant and symlinked contract files block. Assert the diff covers every contract file that differs. Store Scope.Checked and the registry answers with the activation decision for audit. derive Changed by comparing each contract file's digest against the trusted set, not only from the forge file list, which can be truncated. Include the old path of every rename. Always run a full Compile (about 2 s worst case) before activating anything. Incremental validation is for PR feedback only (WI-04a).
 - **WI-12** `internal/forge/github`: go-github implementation of WI-08, GitHub App auth, issue types, Checks
   publishing and the merge queue. Contract tests run the same suite against the fake and against recorded fixtures.
   From WI-08: implement forgetest.Harness over recorded fixtures. Tests: url.PathEscape of identity values; an invalid tree name means Tree errors; modes 120000/160000; Compare beyond 3000 files and truncated trees are recovered or give ErrIncomplete. JobExecution.Provenance is Complete only when every field, including reusable-workflow repo/commit, came from the API.

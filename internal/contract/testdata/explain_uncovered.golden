@@ -1,0 +1,16 @@
+revision: "a4ac7e7ccc7544f12d78ba75fd84289a903511f3"
+path: "other/x.go"
+covered: false
+stack: none
+access: none (source: "")
+protected: false
+sensitive: false (sources: none)
+generated: false (source: "install default")
+lightsOn: false (sources: none)
+switchStaleDays: 45 (source: "install default")
+switchAbandonedDays: 90 (source: "install default")
+reviewBudgetLines: 400 (source: "install default")
+verify gate: name="secret-scan" producer="github-app:1" workflow="900" check="secret-scan" revision="a4ac7e7ccc7544f12d78ba75fd84289a903511f3" mandatory=true owner="factory" sources: "factory baseline"
+union gate: name="smoke" producer="github-app:1" workflow="900" check="smoke" revision="a4ac7e7ccc7544f12d78ba75fd84289a903511f3" mandatory=true owner="factory" sources: "factory baseline"
+reviewer: "pr-reviewer" sources: "factory baseline"
+reviewer: "security-reviewer" sources: "factory baseline"

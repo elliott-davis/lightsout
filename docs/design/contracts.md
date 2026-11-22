@@ -223,7 +223,7 @@ Measured worst cases:
 The budgets are unexported fields of `Policy`, so tests can lower them to prove the fail-closed paths.
 
 `PathPolicy` and `Effective` carry raw repository path text. A consumer that writes it to a PR comment, check run or
-log must escape it (WI-04 explain, WI-14).
+log must escape it (`WriteExplanation` does; WI-14).
 
 ### Baseline
 
@@ -273,13 +273,123 @@ first pinned revision and the first mandatory declaration, so each gate of a con
 SHA-256 of the contract's canonical JSON after validating it. Any later change to any field changes the JSON, so a
 mutated or hand-built contract has no matching digest and is validated in full.
 
-Not built yet (WI-04):
+### Incremental validation (CON-13)
 
-- `Explain(path)` lists each effective value for one path and its source (CON-13).
-- `ValidateChanged(set, changedDirs)` validates the changed contracts, their ancestors and their descendants, and
-  returns the set it checked so tests can assert the scope (CON-13).
-- `CheckGates(ctx, eff, registry)` asks a consumer-defined `GateRegistry` whether each gate's producer, workflow and
-  pinned revision are registered (CON-4). Install config backs it in v1; the forge adapter backs it later.
+`ValidateChanged(ctx, set, baseline, defaults, ChangeOptions{Changed, Registry, TrustedDigest})` validates what
+a change touched without re-validating the whole set. It returns a `Scope{Changed, Checked, CheckedDirs, Full}` so
+tests and callers can assert exactly what ran.
+
+- **Changed** are directories ("" is the root), never file paths. An entry that names a contract file, in any case or
+  spelling (`svc/.factory.yaml`, `.FACTORY.YAML`, a look-alike with an invisible character), is rejected with an error
+  wrapping `ErrInvalidPath` that says to pass the contract's directory. `ChangedDirs(paths)` maps changed repository
+  file paths to the contract directories they affect.
+- **Checked** are the changed contracts that exist, their dirKey ancestors, their dirKey descendants (a deleted
+  contract's descendants too) and any directory whose dirKey collides with a changed one. Siblings are not checked.
+  `CheckedDirs` are the same contracts as directories.
+- Every Checked contract gets the full per-contract checks: schema re-validation and patterns, the relational checks,
+  the stack-depth and gate caps, and collisions. Contracts outside Checked are not validated. Each check reads only the
+  contract under test and the contracts above it, so a loosening in a changed contract, or a parent that re-pins a gate
+  revision its descendant still pins to the old one, is found.
+- **The trust premise.** Contracts outside the scope are valid only if they were validated at the trusted revision
+  under the same baseline, defaults and validator. `TrustDigest(baseline, defaults)` (named for what it covers, which is
+  more than the baseline) is a SHA-256 over a canonical encoding of every field of both, the SHA-256 of the contract
+  schema, a `validatorVersion` constant (bump it whenever a validation rule changes), `MaxStackDepth`, `MaxStackGates`
+  and the default work budgets. WI-11 stores it with each trusted revision and passes it as `TrustedDigest`. If it is
+  empty (unknown) or differs from the current digest, `ValidateChanged` validates every contract and sets `Scope.Full`.
+- **CON-4.** With `Registry` set, the gates of *every* compiled contract, in scope or not, and of the baseline are
+  checked in the same call (the same lookups as `CheckGates`), and their problems join the others in one
+  `*ValidationError`. These are lookups, not relational proofs, so they are cheap, and authorization must come from the
+  current registry and never from an earlier check: a gate registered when a contract was last validated may have been
+  revoked since. The trust digest therefore does not cover registration. A registry error is returned wrapped and
+  never counts as registered. A nil `Registry` skips the check; the activation path (WI-11) must always pass one.
+- **Incremental validation is for PR feedback.** The relational work budget is shared across the whole set, so sibling
+  contracts that each fit a scoped run can exceed it together in a full one. Activation (WI-11) must therefore run a
+  full `Compile` (about 2 s in the worst case) before anything is activated, and not rely on a scoped result.
+- An empty `Changed` validates no contract (unless `Full` is forced) and returns nil. A registry still checks every
+  gate.
+- `Compile` and `ValidateChanged` share one path: build the levels, then validate (which builds the stacks inside),
+  with `Compile` passing every directory. `Compile` is as strict as ever and still reports a loosening in a contract
+  nobody changed.
+- Fail closed: the scope is closed under key-ancestors, so a contract in scope never sits under an unbuildable stack
+  outside it. That closure is the primary guarantee; `validate` also reports, as defense in depth, any contract in
+  scope whose stack could not be built. A stack that fails outside the scope is not reported and does not stop the
+  checks inside it.
+- Problems come back as a `*ValidationError`. A nil set, a bad baseline or defaults, a registry error, a cancelled
+  context or an invalid changed entry is a plain error.
+
+### Explain (CON-13)
+
+`Policy.Explain(path)` returns an `Explanation{Revision, Effective PathPolicy}`: every effective value for the path and
+the contract that set it. `ErrInvalidPath` and `ErrTooComplex` from `ForPath` pass through.
+
+`WriteExplanation(w, e)` prints one line per value: access and its source, covered, the stack, protected, sensitive
+and its sources, generated and its source, lightsOn and its sources, each override and its source, then every verify
+and union gate (name, producer, workflow, check, revision, mandatory, owner, sources), each oracle and each reviewer
+with its sources. Every string that came from the repository is escaped with the same helper as `Problem` text
+(`display`). The escaped set is C0 and C1 controls, format characters (Cf: bidi overrides, tag characters), other
+non-printable runes, invalid UTF-8, `\`, and `#` (as `\x23`, so a `##[command` cannot reach a CI log, where GitHub's
+legacy runner parser finds it anywhere in a line). `quote` escapes `#` the same way, and so does the path-glob error text in `internal/pathglob`. `contract.EscapeText`
+applies the same rules to any string; the CLI runs every error it prints through it, and `Load` never wraps a
+`*fs.PathError`, which would print its path raw: an unreadable directory is a `invalid-path` problem and any other I/O
+error carries the quoted name and only the underlying cause. The `flag` package's own error output is switched off for
+the same reason. An escaped string is cut at about
+4 KiB. Each is printed as one double-quoted token in which a
+`"` is escaped as `\"`, so a hostile path or gate name cannot forge a line or close its quotes.
+
+`Explanation.MarshalJSON` is the stable shape for `--json`: top-level keys `revision`, `path`, `covered`, `stack`,
+`access`, `protected`, `sensitive`, `generated`, `lightsOn`, `switchStaleDays`, `switchAbandonedDays`,
+`reviewBudgetLines`, `verifyGates`, `unionGates`, `oracles` and `reviewers`. Values that have a source are
+`{"value", "source"}` (or `"sources"` for lists); empty lists are `[]`. Add fields, never rename one.
+`encoding/json` escapes only the C0 controls (and `<`, `>`, `&`, U+2028, U+2029), so `MarshalJSON` also rewrites every
+rune that `display` would escape (`#`, C1 controls such as U+0085 and U+009B, DEL, format characters such as U+202E
+and tag characters outside the BMP) as `\uXXXX`.
+
+### Registered gates (CON-4)
+
+`GateRegistry` is defined here, by its consumer: `Registered(ctx, GateRef) (bool, error)`. Install config backs it in
+v1 (WI-07), and the forge adapter backs it later. `Policy.CheckGates(ctx, reg, dirs)` asks it about:
+
+- every verify gate, union gate and dark-merge oracle declared by the contracts in `dirs` (nil means all), and
+- every baseline gate, always.
+
+`dirs` entries are contract directories exactly as the set spells them. One that isn't (a file path, a case or NFC
+variant, a directory with no contract) returns an error wrapping `ErrUnknownContractDir`; it is never skipped.
+
+The answer is for the whole identity and pinned revision, so a registered identity at an unregistered revision, or a
+foreign producer with the same check name, is unregistered. An unregistered gate is a `Problem` with code
+`unregistered-gate`; `File` and `Field` point at the declaration (for example `/gates/verify/0`), and a baseline gate
+has `File` "factory baseline" and a field like `/verify/0`. All are collected into one `*ValidationError`. A registry
+error is returned wrapped, never as a problem and never as "registered", and stops the check. The check honors `ctx`
+before every lookup. A gate repeated across contracts is asked about once but reported at every declaration.
+
+### The `factory contract` CLI
+
+`factory contract schema` prints the JSON Schema. `factory contract validate` and `factory contract explain` read the
+contracts of a checkout with `os.DirFS(--root)`. In production the factory reads the tracked tree of a revision through
+the forge; this command is for developers and CI checkouts, where the checkout is the tracked tree.
+
+- `validate --revision <sha> (--gate-registry <file.json> | --no-gate-registry) [--root .] [--changed <dir>]...
+  [--known-agent <name>]... [--trusted-digest <hex>]` prints one problem per line to stdout and exits non-zero
+  on any. `--revision` (40 or 64 hex digits) is required; a missing or invalid one is a usage error. So is giving
+  neither registry flag: skipping the CON-4 check must be explicit, and `--no-gate-registry` prints a note on stderr.
+  `--gate-registry` is a JSON array of gate refs, decoded strictly: unknown, duplicate or case-variant keys, a missing
+  or empty field, a revision that is not 40 or 64 lowercase hex digits, trailing data and a file over 1 MiB are errors.
+  Without `--changed` the command is one full `ValidateChanged` call with the registry, so loosenings and unregistered
+  gates are reported together. `--changed` (a directory, not a file path; a file path is a usage error) validates only
+  the scope when `--trusted-digest` matches `trust-digest`, and everything otherwise, with a stderr note saying so.
+  `--trusted-digest` without `--changed` is a usage error.
+- `trust-digest [defaults flags]` prints the trust digest of the CLI's baseline and defaults, so CI can pin it.
+- `explain --revision <sha> [--root .] [--json] <path>` compiles the tree (a tree with problems prints them and fails)
+  and prints the explanation. Flags come before the path.
+
+Until WI-07's install config exists, the install defaults and the baseline are CLI defaults: `--switch-stale-days 30`,
+`--switch-abandoned-days 30`, `--review-budget-lines 300`; reviewers `pr-reviewer` and `security-reviewer` (PR reviewer
+and security reviewer respectively); no baseline gates; protected `.github/workflows/**`, `.github/actions/**` and
+`CODEOWNERS`. WI-07 replaces them.
+
+`Problem.String` renders `"file" "field": [code] message`, with File and Field quoted (a `"` escaped) so that a
+directory named `::error title=x::y` cannot start a line and a `:` or `[` in a name cannot pass for the field or
+the code.
 
 Problems are returned as a typed `*ValidationError` holding `Problem{File, Field, Code, Message}` values, so
 callers and tests branch on `Code` with `errors.As`. All four fields are escaped and bounded: they carry untrusted

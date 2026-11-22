@@ -108,7 +108,15 @@ func Load(ctx context.Context, fsys fs.FS, p *Parser, revision string) (*Set, er
 			return cerr
 		}
 		if err != nil {
-			return fmt.Errorf("walk %q: %w", name, err)
+			// A directory that cannot be read is a problem, not an I/O
+			// error: the PathError text would carry the raw path. Skipping it
+			// without a problem could hide a contract, so Load fails.
+			var pe *fs.PathError
+			if name != "." && errors.As(err, &pe) {
+				problems = append(problems, Problem{File: name, Code: CodeInvalidPath, Message: sanitize("cannot read directory: " + pe.Err.Error())})
+				return fs.SkipDir
+			}
+			return ioError("walk", name, err)
 		}
 		if d.Name() == ".git" {
 			ps, serr := foreignTree(name, d)
@@ -151,6 +159,17 @@ func Load(ctx context.Context, fsys fs.FS, p *Parser, revision string) (*Set, er
 	return set, nil
 }
 
+// ioError wraps an I/O failure on name. A *fs.PathError prints its Path raw,
+// and a path comes from the repository, so only its cause is wrapped and the
+// name is quoted.
+func ioError(op, name string, err error) error {
+	var pe *fs.PathError
+	if errors.As(err, &pe) {
+		err = pe.Err
+	}
+	return fmt.Errorf("%s %s: %w", op, quote(name), err)
+}
+
 // foreignTree handles a .git entry. The root's own .git is skipped. Below the
 // root it is a problem, because skipping a contract can only loosen access.
 func foreignTree(name string, d fs.DirEntry) ([]Problem, error) {
@@ -179,19 +198,19 @@ func loadFile(fsys fs.FS, p *Parser, name string, d fs.DirEntry) (*Contract, []P
 	}
 	f, err := fsys.Open(name)
 	if err != nil {
-		return nil, nil, fmt.Errorf("open %q: %w", name, err)
+		return nil, nil, ioError("open", name, err)
 	}
 	defer f.Close()
 	info, err := f.Stat()
 	if err != nil {
-		return nil, nil, fmt.Errorf("stat %q: %w", name, err)
+		return nil, nil, ioError("stat", name, err)
 	}
 	if !info.Mode().IsRegular() {
 		return one(CodeNotRegular, "contract file must be a regular file")
 	}
 	data, err := io.ReadAll(io.LimitReader(f, MaxFileSize+1))
 	if err != nil {
-		return nil, nil, fmt.Errorf("read %q: %w", name, err)
+		return nil, nil, ioError("read", name, err)
 	}
 	if len(data) > MaxFileSize {
 		return one(CodeTooLarge, fmt.Sprintf("contract exceeds %d bytes", MaxFileSize))

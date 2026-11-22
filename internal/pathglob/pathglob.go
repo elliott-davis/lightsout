@@ -66,7 +66,8 @@ func echo(s string) string {
 	if len(s) > maxEcho {
 		s = s[:maxEcho] + "..."
 	}
-	return fmt.Sprintf("%q", s)
+	// A "#" is escaped so that no "##[" workflow command can reach a CI log.
+	return strings.ReplaceAll(fmt.Sprintf("%q", s), "#", `\x23`)
 }
 
 // printableASCII reports whether s holds only bytes 0x20 through 0x7e. In v1
