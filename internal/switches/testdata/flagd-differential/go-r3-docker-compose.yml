@@ -1,0 +1,11 @@
+services:
+  web:
+    image: x
+    environment:
+      - FLAGS=1
+    command: ["flagd", "start", "--uri", "file:./flags.json"]
+  db: &db
+    image: postgres
+  db2:
+    <<: *db
+    healthcheck: {interval: 1.5s, retries: 3.0}

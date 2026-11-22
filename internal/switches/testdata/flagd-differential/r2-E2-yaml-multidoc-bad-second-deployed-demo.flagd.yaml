@@ -1,0 +1,11 @@
+flags:
+  old:
+    state: ENABLED
+    variants: {on: true, off: false}
+    defaultVariant: off
+  evil:
+    state: ENABLED
+    variants: {on: true, off: false}
+    defaultVariant: on
+---
+key: [unclosed

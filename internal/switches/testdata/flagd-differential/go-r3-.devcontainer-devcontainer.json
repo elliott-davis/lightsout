@@ -1,0 +1,1 @@
+{"name":"Go","image":"mcr.microsoft.com/devcontainers/go:1.22","features":{"ghcr.io/devcontainers/features/docker-in-docker:2":{}},"runArgs":["--cap-add=SYS_PTRACE"],"postCreateCommand":"go mod download"}

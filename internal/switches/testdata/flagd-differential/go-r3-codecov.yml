@@ -1,0 +1,7 @@
+coverage:
+  status:
+    project: {default: {target: auto}}
+flags:
+  unit:
+    paths: [src/]
+    carryforward: true

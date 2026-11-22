@@ -1,0 +1,1 @@
+{"version":3,"configurePresets":[{"name":"dev","cacheVariables":{"CMAKE_CXX_FLAGS":"-Wall -Wextra"}}]}

@@ -1,0 +1,6 @@
+flags:
+  evil:
+    state: ENABLED
+    state: ENABLED
+    variants: {on: true, off: false}
+    defaultVariant: on

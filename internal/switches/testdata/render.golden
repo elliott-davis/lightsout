@@ -1,0 +1,11 @@
+### Feature switches
+
+| Repo | Switch | Default | Acceptance | Manifest | Owner | Age | First seen | Sources | Description |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| acme/api | blocked | off | passed (run-2), union blocked | man-3 | alice | 2d | abc123 | a.flagd.json, b.flagd.json | does a thing |
+| acme/api | zeta | off | not passed | - | alice | 1h | abc123 | a.flagd.json, b.flagd.json | does a thing |
+| acme/shop | alpha | off | not passed | - | alice | 30m | abc123 | a.flagd.json, b.flagd.json | does a thing |
+| acme/shop | fresh | ON | not passed | - | alice | under a minute | abc123 | a.flagd.json, b.flagd.json | does a thing |
+| acme/shop | mid | not shown to be off (unproven-default) | passed (run-1) | - | alice | 5h | abc123 | a.flagd.json, b.flagd.json | does a thing |
+| acme/shop | old | unchecked | not passed | - | alice | unknown | abc123 | a.flagd.json, b.flagd.json | does a thing |
+| acme/shop | zeta | off | passed (run-7), union qualified | man-9 | alice | 3d | abc123 | a.flagd.json, b.flagd.json | does a thing |

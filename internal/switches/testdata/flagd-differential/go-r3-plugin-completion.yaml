@@ -1,0 +1,6 @@
+name: env
+commands:
+  - name: list
+    flags: [a]
+flags:
+- global

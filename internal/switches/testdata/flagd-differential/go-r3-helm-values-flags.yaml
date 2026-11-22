@@ -1,0 +1,3 @@
+flags:
+  verbose: true
+  logLevel: debug

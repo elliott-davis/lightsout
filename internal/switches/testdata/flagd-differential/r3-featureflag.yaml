@@ -1,0 +1,13 @@
+apiVersion: core.openfeature.dev/v1beta1
+kind: FeatureFlag
+metadata:
+  name: demo
+spec:
+  flagSpec:
+    flags:
+      evil:
+        state: ENABLED
+        variants:
+          "on": true
+          "off": false
+        defaultVariant: "on"

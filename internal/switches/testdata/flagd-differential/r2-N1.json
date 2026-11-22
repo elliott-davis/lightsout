@@ -1,0 +1,1 @@
+{"$evaluators":{"a\"},\"state\":\"ENABLED\",\"variants\":{\"off\":false,\"on\":true}},\"zz\":{\"defaultVariant\":\"on\",\"metadata\":{\"k\":\"v":{"x":1}},"flags":{"old":{"state":"ENABLED","variants":{"on":true,"off":false},"defaultVariant":"off","metadata":{"$ref":"a"}},"zz":{"state":"ENABLED","variants":{"on":false,"off":true},"defaultVariant":"on","metadata":{"k":"v"}}}}

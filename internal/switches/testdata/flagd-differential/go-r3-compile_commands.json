@@ -1,0 +1,1 @@
+[{"directory":"/x","command":"cc -O2 -c a.c","file":"a.c","arguments":["cc","-O2"]}]

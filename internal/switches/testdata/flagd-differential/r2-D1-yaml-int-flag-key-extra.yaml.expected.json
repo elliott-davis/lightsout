@@ -1,0 +1,25 @@
+{
+  "stage": "ok",
+  "flags": [
+    {
+      "key": "1",
+      "state": "ENABLED",
+      "defaultVariant": "off",
+      "variants": {
+        "off": false,
+        "on": true
+      },
+      "hasTargeting": false
+    },
+    {
+      "key": "evil",
+      "state": "ENABLED",
+      "defaultVariant": "on",
+      "variants": {
+        "off": false,
+        "on": true
+      },
+      "hasTargeting": false
+    }
+  ]
+}

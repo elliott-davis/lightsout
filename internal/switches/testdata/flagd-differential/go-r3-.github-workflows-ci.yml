@@ -1,0 +1,18 @@
+on:
+  push:
+    branches: [main]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: write config
+        run: |
+          cat > cfg.yaml <<EOF
+          flags:
+            race: true
+          EOF
+      - uses: codecov/codecov-action@v4
+        with:
+          flags: unittests
+          fail_ci_if_error: true

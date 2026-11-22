@@ -1,0 +1,12 @@
+{
+  "stage": "ok",
+  "flags": [
+    {
+      "key": "unit",
+      "state": "",
+      "defaultVariant": "",
+      "variants": null,
+      "hasTargeting": false
+    }
+  ]
+}

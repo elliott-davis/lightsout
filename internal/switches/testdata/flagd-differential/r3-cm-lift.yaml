@@ -1,0 +1,4 @@
+apiVersion: v1
+kind: ConfigMap
+data:
+  demo.flagd.json: "{\"$evaluators\":{\"x\\\",\\\"z\\\":{\\\"k\\\":\\\"v\":{\"q\":1},\"y\\\"},\\\"r\\\":\\\"s\":{\"q\":2}},\"p\":{\"a\":{\"$ref\":\"x\",\"z\":{\"k\":\"v\"}},\"flags\":{\"evil\":{\"state\":\"ENABLED\",\"variants\":{\"on\":true,\"off\":false},\"defaultVariant\":\"on\"}},\"zz\":{\"k1\":{\"$ref\":\"y\"},\"r\":\"s\"}}}"

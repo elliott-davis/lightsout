@@ -1,0 +1,5 @@
+builds:
+- id: app
+  flags:
+  - -tags
+  - netgo

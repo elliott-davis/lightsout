@@ -1,0 +1,1 @@
+{"editor.formatOnSave":true,"go.buildFlags":["-tags=integration"],"go.testFlags":["-race","-count=1"],"rust-analyzer.cargo.features":"all"}

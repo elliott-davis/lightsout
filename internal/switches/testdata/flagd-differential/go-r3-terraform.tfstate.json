@@ -1,0 +1,1 @@
+{"version":4,"terraform_version":"1.6.0","resources":[{"mode":"managed","type":"aws_instance","instances":[{"attributes":{"user_data":"flags: true\nfoo: bar"}}]}]}

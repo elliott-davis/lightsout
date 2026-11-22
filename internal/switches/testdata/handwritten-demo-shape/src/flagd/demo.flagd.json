@@ -1,0 +1,53 @@
+{
+  "$schema": "https://flagd.dev/schema/v0/flags.json",
+  "flags": {
+    "adFailure": {
+      "description": "Fail ad service",
+      "state": "ENABLED",
+      "variants": {
+        "on": true,
+        "off": false
+      },
+      "defaultVariant": "off"
+    },
+    "aiSlowResponse": {
+      "description": "Simulate a slow AI response",
+      "state": "ENABLED",
+      "variants": {
+        "5sec": 5,
+        "10sec": 10,
+        "off": 0
+      },
+      "defaultVariant": "off"
+    },
+    "productCatalogFailure": {
+      "description": "Fail product catalog service on a specific product",
+      "state": "ENABLED",
+      "variants": {
+        "on": true,
+        "off": false
+      },
+      "defaultVariant": "off",
+      "targeting": {
+        "if": [
+          { "==": [{ "var": "productId" }, "OLJCESPC7Z"] },
+          "on",
+          "off"
+        ]
+      }
+    },
+    "emitRawPii": {
+      "description": "Emit raw PII in telemetry",
+      "state": "ENABLED",
+      "variants": {
+        "on": true,
+        "off": false
+      },
+      "defaultVariant": "off",
+      "metadata": {
+        "owner": "telemetry",
+        "kind": "test-only"
+      }
+    }
+  }
+}

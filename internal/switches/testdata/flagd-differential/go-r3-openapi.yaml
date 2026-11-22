@@ -1,0 +1,9 @@
+openapi: 3.0.0
+info: {title: x, version: '1'}
+components:
+  schemas:
+    Thing:
+      properties:
+        flags:
+          type: integer
+          description: 'Flags: a bitmask of options for the thing'

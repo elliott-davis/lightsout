@@ -1,0 +1,1 @@
+{"openapi":"3.0.0","components":{"schemas":{"T":{"properties":{"mode":{"type":"string","description":"flags: comma separated list of mode switches"}}}}}}

@@ -1,0 +1,5 @@
+builds:
+  - ldflags:
+      - -s -w
+    flags:
+      - -trimpath

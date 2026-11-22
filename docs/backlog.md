@@ -138,6 +138,7 @@ lands. Design notes for larger items live in [docs/design/](design/).
   From WI-07: implement install activation. It needs `quorum` granted OpActivateInstall decisions from distinct principals, taken only from the active revision's RoleSource, and consumed together with a compare-and-swap of the active generation in one transaction. Target.Revision = install.ActivationRevision(installID, activeGeneration, candidateCommit). Bootstrap happens once; refuse a second. Read the install config only via install.Load at a full SHA, refuse an empty InstallRevision on any production path, and store the install revision with every decision and evidence row. The quorum helper counts distinct principals, never grants; authz.Grant has no Principal field, so carry it alongside. Denial tests: the same approver twice; a member only of the candidate revision; a bot.
   From WI-15: review.Evaluate fails closed on any signed record inconsistent with the snapshot, but can't detect a record deleted outright or one whose signature was corrupted. Build the review snapshot from audited store records with a completeness proof (a per-change chain or sequence range), and set Snapshot.Complete only when that proof checks.
   WI-10a (the store) is done; WI-10d ([#6](https://github.com/elliott-davis/lightsout/issues/6)) closes its two open HIGH findings in the startup privilege check and must land before WI-10c serves real traffic. CI runs the PostgreSQL tests in the `postgres` job (`make test-postgres`); making it a required check is [#12](https://github.com/elliott-davis/lightsout/issues/12).
+  From WI-23: persist switches.Record keyed by (repo, key). Write FirstSeenRevision and FirstSeenAt once, when Compare first reports the key as New at a merged revision. Take Default from Switch.Status() at the latest trusted revision. Keep Qualification as append-only, audited transitions written in the same transaction as the Acceptance or Union state change. Store Owner by stable ID, never from flag metadata. Tests: re-detecting a key must not reset FirstSeenAt; a key removed and then re-added must be decided explicitly.
 - **WI-11** Activation of a contract revision requires approval of that exact revision by a current owner,
   under the previously trusted ownership and gate rules. A product change can never supply the policy that
   authorizes it (CON-2). Protected paths (contracts, CI definitions, CODEOWNERS) fail a product PR, and a protected
@@ -159,6 +160,7 @@ lands. Design notes for larger items live in [docs/design/](design/).
     - **Registration rules, at the pinned commit:** fixed, unique rendered names; no `if:` on gate-defining work; no continue-on-error. Resolve a numeric workflowId to `<repo-id>:<path>`, or reject it.
     - **Conclusions.** Map stale, action_required and startup_failure to a completed non-success value, never ConclusionNone. ListJobExecutions lists Actions jobs only. Set SupersededBy on every older attempt.
     - **Conformance:** an incomplete record's RunAttempt equals its run's attempt (gate's older-records skip relies on it). Fixtures: matrix names, a single-leg rerun, a reusable callee, a skipped job with started_at set, and the twin-ambiguity cases through the fake.
+  From WI-23: publish the switches.Render output as App check output, within the Checks output size limit (with an "N more" line). Add fixtures that prove escaped `@`, `::` and `#` produce no mention and no annotation.
 
 ## Phase 3: Verify
 
@@ -194,6 +196,7 @@ lands. Design notes for larger items live in [docs/design/](design/).
 - **WI-16** Compare baseline and merge-group candidate on responses, reads, writes, events and queued jobs. Dark
   features and Tasks require equivalence (PIP-4). An authorized Fix permits only its delta (INT-10). Record both
   SHAs, configs, the oracle revision and the result.
+  From WI-23: take the first-introduced switches from switches.Compare(baselineSet, candidateSet).New, detected at the exact SHAs. Run the candidate with each of them explicitly off through a flagd override, and record the override values. Refuse on verdict error, or when any status is not default-off.
 - **WI-17** Declared effects, affected callers, rollout order, recovery steps and owner approval of the exact revision.
   An errant flag-off side effect blocks. Expand and contract run as separate trains.
   From WI-15:
@@ -218,6 +221,7 @@ lands. Design notes for larger items live in [docs/design/](design/).
     - **Config.** Timers.ReviewRounds maps to Config.ReviewRounds and Baseline.PRReviewer to Config.PRReviewer. VerifyAttempts and VerifyTimeout need install-config fields. SizeGateID must equal WI-14's review-budget gate ID.
     - **Lights-on.** On NeedsAuthorization, authorize every RequiredApprovals target at execution time, in the merge transaction. Never cache a grant.
     - **Before publishing or merging,** check StateVersion, PolicyRevision, InstallRevision, HeadSHA and PR against the current queue candidate in the same transaction. Route the replan obligation to the spec writer with who asked and why (INT-15). Audit the Decision and its Rejected records; escape claim text and paths in check output.
+  From WI-23: switches.Compare(...).Verdict at the merge-group base and candidate is a mandatory Verify gate; blocked and error both fail. Build records from the detected Switch and show the switch table in the PIP-1 output. How P2 applies to PRs that change an existing switch is undecided ([#11](https://github.com/elliott-davis/lightsout/issues/11)); until then Compare blocks them.
 
 ## Phase 4: Intake and holdouts
 
@@ -227,7 +231,9 @@ lands. Design notes for larger items live in [docs/design/](design/).
 | WI-20 | Scenarios, spec and PR plan | INT-4, INT-5, INT-14, INT-15, INT-16, INT-21, FLG-1, COST-1 (estimate) | WI-19 | todo |
 | WI-21 | Holdout store | INT-6, INT-7, INT-9, AGT-2 | WI-06, WI-05 | todo |
 | WI-22 | Unflagged Fix authorization | INT-17, INT-10 | WI-03, WI-20 | todo |
-| WI-23 | Switch convention detection and records | FLG-2, FLG-3 | WI-08 | todo |
+| WI-23 | Switch convention detection and records | FLG-2, FLG-3 | WI-08 | done |
+| WI-23a | Switch detection residual limits ([#9](https://github.com/elliott-davis/lightsout/issues/9)) | FLG-2 | WI-23 | todo |
+| WI-23b | Switch detection: Kubernetes delivery path and evaluator DoS ([#8](https://github.com/elliott-davis/lightsout/issues/8)) | FLG-2 | WI-23 | todo |
 
 - **WI-19** Intake state, versioned proposals and authenticated decisions recorded on the issue (INT-1). The refined idea's
   affected paths and duplicate or conflicting issues (INT-2). A proposed and confirmed type mapped to GitHub
@@ -239,6 +245,7 @@ lands. Design notes for larger items live in [docs/design/](design/).
   factory path keyed by switch or issue ID (INT-5). The plan is a dependency graph whose first PR adds the switch, off (INT-14).
   Only the spec writer replans, every replan is logged, and replans are capped (INT-15). An explicit complete state (INT-16).
   Each scenario records its bound test layer (INT-21). Switch IDs are minted here (FLG-1). The cost estimate is recorded (COST-1).
+  From WI-23: a minted switch ID must be a valid flagd and manifest key, unique per repo ignoring case. The plan's first PR (INT-14) must give exactly Compare.New == [{ID, default-off}], and every later PR references the ID.
 - **WI-21** Only QE and the scenario reviewer can read a suite. The Acceptance runner gets read-only access scoped to
   one run and suite revision. Coder, PR reviewer and customer CI identities are denied (INT-6, AGT-2). Suite revisions
   are versioned separately from intent, and a public regression PR leaks nothing (INT-7). Scenario review against the exact
@@ -248,6 +255,7 @@ lands. Design notes for larger items live in [docs/design/](design/).
   candidate. Anything broader needs reclassification or a switch.
 - **WI-23** Detect OpenFeature manifests and flagd config, and make new switches default off (FLG-2). Record switch
   identity, owner, age, default and qualification status, and show them on GitHub (FLG-3).
+  Done with follow-ups: WI-23b ([#8](https://github.com/elliott-davis/lightsout/issues/8), HIGH: Kubernetes ConfigMap and FeatureFlag delivery bypasses and an evaluator DoS) and WI-23a ([#9](https://github.com/elliott-davis/lightsout/issues/9), residual limits). Open decisions: where `tools/fdump` lives ([#10](https://github.com/elliott-davis/lightsout/issues/10)) and how P2 applies to existing switches ([#11](https://github.com/elliott-davis/lightsout/issues/11)).
 
 ## Phase 5: Acceptance, Union and recovery
 
@@ -263,6 +271,7 @@ lands. Design notes for larger items live in [docs/design/](design/).
   returns only redacted feedback, freezes the suite revision and caps repairs (PIP-15).
 - **WI-25** An immutable manifest pins the source commit, verified artifact digest, policy revision, release defaults,
   complete flag values and dependencies. Changing any pinned input invalidates qualification.
+  From WI-23: "complete resolved flag values" means every key in switches.Detect at the manifest's source commit has a value. Refuse when Detect reports problems. Pin a hash of the detector's canonical per-key view in the manifest; a change to the Set invalidates qualification.
 - **WI-26** Release defaults, all-on, all-off and the exact proposed configuration, with shared evidence for identical
   configurations (PIP-5). Daily cadence, root-contract override, a floor of twice the last run time, and skipping empty
   trains (PIP-11). Serialize overlapping hand-written files and shared non-switchable artifacts, both at plan time and per diff (PIP-10).

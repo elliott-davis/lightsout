@@ -1,0 +1,15 @@
+{
+  "stage": "ok",
+  "flags": [
+    {
+      "key": "old",
+      "state": "ENABLED",
+      "defaultVariant": "off",
+      "variants": {
+        "off": true,
+        "on": false
+      },
+      "hasTargeting": false
+    }
+  ]
+}

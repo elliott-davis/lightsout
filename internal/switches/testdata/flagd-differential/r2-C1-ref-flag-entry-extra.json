@@ -1,0 +1,1 @@
+{"$evaluators":{"e":{"state":"ENABLED","variants":{"on":true,"off":false},"defaultVariant":"on"}},"flags":{"evil":{"$ref":"e"}}}
