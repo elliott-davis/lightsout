@@ -73,7 +73,7 @@ func readEntries(ctx context.Context, q queryer, chain string, from uint64, limi
 		return []audit.Entry{}, nil
 	}
 	rows, err := q.Query(ctx,
-		`SELECT seq, format, at, record, prev_hash, hash FROM audit_entries WHERE chain = $1 AND seq >= $2 ORDER BY seq LIMIT $3`,
+		`SELECT seq, format, at, record, prev_hash, hash FROM ONLY audit_entries WHERE chain = $1 AND seq >= $2 ORDER BY seq LIMIT $3`,
 		chain, int64(min(from, 1<<62)), limit)
 	if err != nil {
 		return nil, fmt.Errorf("read audit entries: %w", err)
@@ -118,7 +118,7 @@ func chainHead(ctx context.Context, q queryer, chain string) (audit.Head, error)
 	var h audit.Head
 	var seq int64
 	var hash []byte
-	if err := q.QueryRow(ctx, `SELECT seq, hash FROM audit_chain_heads WHERE chain = $1`, chain).Scan(&seq, &hash); err != nil {
+	if err := q.QueryRow(ctx, `SELECT seq, hash FROM ONLY audit_chain_heads WHERE chain = $1`, chain).Scan(&seq, &hash); err != nil {
 		return audit.Head{}, fmt.Errorf("read chain head: %w", err)
 	}
 	h.Seq = uint64(seq) //nolint:gosec // constrained >= 0 by the schema

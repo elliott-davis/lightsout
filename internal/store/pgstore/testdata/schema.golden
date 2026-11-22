@@ -1,0 +1,93 @@
+table audit_chain_heads relkind=r persistence=p am=heap
+column audit_chain_heads.chain type=text notnull=t default= generated= identity= collation=pg_catalog."default" provider=d deterministic=t collate= ctype=
+column audit_chain_heads.seq type=bigint notnull=t default= generated= identity= collation=
+column audit_chain_heads.hash type=bytea notnull=t default= generated= identity= collation=
+constraint audit_chain_heads.audit_chain_heads_chain_check type=c validated=t def=CHECK ((chain = ANY (ARRAY['decision'::text, 'denial'::text])))
+constraint audit_chain_heads.audit_chain_heads_hash_check type=c validated=t def=CHECK ((length(hash) = 32))
+constraint audit_chain_heads.audit_chain_heads_pkey type=p validated=t def=PRIMARY KEY (chain)
+constraint audit_chain_heads.audit_chain_heads_seq_check type=c validated=t def=CHECK ((seq >= 0))
+index audit_chain_heads.audit_chain_heads_pkey valid=t def=CREATE UNIQUE INDEX audit_chain_heads_pkey ON audit_chain_heads USING btree (chain)
+table audit_entries relkind=r persistence=p am=heap
+column audit_entries.chain type=text notnull=t default= generated= identity= collation=pg_catalog."default" provider=d deterministic=t collate= ctype=
+column audit_entries.seq type=bigint notnull=t default= generated= identity= collation=
+column audit_entries.format type=integer notnull=t default= generated= identity= collation=
+column audit_entries.at type=timestamp with time zone notnull=t default= generated= identity= collation=
+column audit_entries.record type=bytea notnull=t default= generated= identity= collation=
+column audit_entries.prev_hash type=bytea notnull=t default= generated= identity= collation=
+column audit_entries.hash type=bytea notnull=t default= generated= identity= collation=
+constraint audit_entries.audit_entries_chain_fkey type=f validated=t def=FOREIGN KEY (chain) REFERENCES audit_chain_heads(chain)
+constraint audit_entries.audit_entries_format_check type=c validated=t def=CHECK ((format >= 1))
+constraint audit_entries.audit_entries_hash_check type=c validated=t def=CHECK ((length(hash) = 32))
+constraint audit_entries.audit_entries_pkey type=p validated=t def=PRIMARY KEY (chain, seq)
+constraint audit_entries.audit_entries_prev_hash_check type=c validated=t def=CHECK ((length(prev_hash) = 32))
+constraint audit_entries.audit_entries_seq_check type=c validated=t def=CHECK ((seq >= 1))
+index audit_entries.audit_entries_pkey valid=t def=CREATE UNIQUE INDEX audit_entries_pkey ON audit_entries USING btree (chain, seq)
+table consumed_decisions relkind=r persistence=p am=heap
+column consumed_decisions.decision_id type=text notnull=t default= generated= identity= collation=pg_catalog."default" provider=d deterministic=t collate= ctype=
+column consumed_decisions.consumed_at type=timestamp with time zone notnull=t default= generated= identity= collation=
+constraint consumed_decisions.consumed_decisions_decision_id_check type=c validated=t def=CHECK (((length(decision_id) >= 1) AND (length(decision_id) <= 256)))
+constraint consumed_decisions.consumed_decisions_pkey type=p validated=t def=PRIMARY KEY (decision_id)
+index consumed_decisions.consumed_decisions_pkey valid=t def=CREATE UNIQUE INDEX consumed_decisions_pkey ON consumed_decisions USING btree (decision_id)
+table deliveries relkind=r persistence=p am=heap
+column deliveries.forge type=text notnull=t default= generated= identity= collation=pg_catalog."default" provider=d deterministic=t collate= ctype=
+column deliveries.delivery_id type=text notnull=t default= generated= identity= collation=pg_catalog."default" provider=d deterministic=t collate= ctype=
+column deliveries.digest type=bytea notnull=t default= generated= identity= collation=
+column deliveries.received_at type=timestamp with time zone notnull=t default= generated= identity= collation=
+constraint deliveries.deliveries_delivery_id_check type=c validated=t def=CHECK (((length(delivery_id) >= 1) AND (length(delivery_id) <= 256)))
+constraint deliveries.deliveries_digest_check type=c validated=t def=CHECK ((length(digest) = 32))
+constraint deliveries.deliveries_forge_check type=c validated=t def=CHECK (((length(forge) >= 1) AND (length(forge) <= 256)))
+constraint deliveries.deliveries_pkey type=p validated=t def=PRIMARY KEY (forge, delivery_id)
+index deliveries.deliveries_pkey valid=t def=CREATE UNIQUE INDEX deliveries_pkey ON deliveries USING btree (forge, delivery_id)
+table schema_migrations relkind=r persistence=p am=heap
+column schema_migrations.version type=integer notnull=t default= generated= identity= collation=
+column schema_migrations.name type=text notnull=t default= generated= identity= collation=pg_catalog."default" provider=d deterministic=t collate= ctype=
+column schema_migrations.checksum type=bytea notnull=t default= generated= identity= collation=
+column schema_migrations.applied_at type=timestamp with time zone notnull=t default=now() generated= identity= collation=
+constraint schema_migrations.schema_migrations_checksum_check type=c validated=t def=CHECK ((length(checksum) = 32))
+constraint schema_migrations.schema_migrations_pkey type=p validated=t def=PRIMARY KEY (version)
+constraint schema_migrations.schema_migrations_version_check type=c validated=t def=CHECK ((version >= 1))
+index schema_migrations.schema_migrations_pkey valid=t def=CREATE UNIQUE INDEX schema_migrations_pkey ON schema_migrations USING btree (version)
+table state_rows relkind=r persistence=p am=heap
+column state_rows.kind type=text notnull=t default= generated= identity= collation=pg_catalog."default" provider=d deterministic=t collate= ctype=
+column state_rows.id type=text notnull=t default= generated= identity= collation=pg_catalog."default" provider=d deterministic=t collate= ctype=
+column state_rows.repo type=text notnull=t default= generated= identity= collation=pg_catalog."default" provider=d deterministic=t collate= ctype=
+column state_rows.version type=bigint notnull=t default= generated= identity= collation=
+column state_rows.current_revision type=text notnull=t default=''::text generated= identity= collation=pg_catalog."default" provider=d deterministic=t collate= ctype=
+column state_rows.approved_revision type=text notnull=t default=''::text generated= identity= collation=pg_catalog."default" provider=d deterministic=t collate= ctype=
+column state_rows.schema_version type=integer notnull=t default= generated= identity= collation=
+column state_rows.payload type=jsonb notnull=t default= generated= identity= collation=
+constraint state_rows.state_rows_approved_revision_check type=c validated=t def=CHECK (((approved_revision = ''::text) OR (approved_revision ~ '^([0-9a-f]{40}|[0-9a-f]{64})$'::text)))
+constraint state_rows.state_rows_current_revision_check type=c validated=t def=CHECK (((current_revision = ''::text) OR (current_revision ~ '^([0-9a-f]{40}|[0-9a-f]{64})$'::text)))
+constraint state_rows.state_rows_id_check type=c validated=t def=CHECK (((length(id) >= 1) AND (length(id) <= 256)))
+constraint state_rows.state_rows_kind_check type=c validated=t def=CHECK ((kind = ANY (ARRAY['issue'::text, 'change'::text, 'feature'::text, 'train'::text])))
+constraint state_rows.state_rows_payload_check type=c validated=t def=CHECK ((jsonb_typeof(payload) = 'object'::text))
+constraint state_rows.state_rows_pkey type=p validated=t def=PRIMARY KEY (kind, id)
+constraint state_rows.state_rows_repo_check type=c validated=t def=CHECK (((length(repo) >= 1) AND (length(repo) <= 256)))
+constraint state_rows.state_rows_schema_version_check type=c validated=t def=CHECK ((schema_version >= 1))
+constraint state_rows.state_rows_version_check type=c validated=t def=CHECK ((version >= 1))
+index state_rows.state_rows_pkey valid=t def=CREATE UNIQUE INDEX state_rows_pkey ON state_rows USING btree (kind, id)
+sequence work_items_seq_seq type=bigint start=1 increment=1 min=1 max=9223372036854775807 cache=1 cycle=f
+table work_items relkind=r persistence=p am=heap
+column work_items.seq type=bigint notnull=t default= generated= identity=a collation=
+column work_items.key type=text notnull=t default= generated= identity= collation=pg_catalog."default" provider=d deterministic=t collate= ctype=
+column work_items.kind type=text notnull=t default= generated= identity= collation=pg_catalog."default" provider=d deterministic=t collate= ctype=
+column work_items.payload type=jsonb notnull=t default= generated= identity= collation=
+column work_items.generation type=bigint notnull=t default=0 generated= identity= collation=
+column work_items.owner type=text notnull=t default=''::text generated= identity= collation=pg_catalog."default" provider=d deterministic=t collate= ctype=
+column work_items.leased_until type=timestamp with time zone notnull=f default= generated= identity= collation=
+column work_items.not_before type=timestamp with time zone notnull=f default= generated= identity= collation=
+column work_items.attempts type=integer notnull=t default=0 generated= identity= collation=
+column work_items.completed type=boolean notnull=t default=false generated= identity= collation=
+column work_items.dead type=boolean notnull=t default=false generated= identity= collation=
+column work_items.dead_reason type=text notnull=t default=''::text generated= identity= collation=pg_catalog."default" provider=d deterministic=t collate= ctype=
+constraint work_items.work_items_attempts_check type=c validated=t def=CHECK ((attempts >= 0))
+constraint work_items.work_items_check type=c validated=t def=CHECK ((NOT (completed AND dead)))
+constraint work_items.work_items_generation_check type=c validated=t def=CHECK ((generation >= 0))
+constraint work_items.work_items_key_check type=c validated=t def=CHECK (((length(key) >= 1) AND (length(key) <= 256)))
+constraint work_items.work_items_kind_check type=c validated=t def=CHECK (((length(kind) >= 1) AND (length(kind) <= 256)))
+constraint work_items.work_items_payload_check type=c validated=t def=CHECK ((jsonb_typeof(payload) = 'object'::text))
+constraint work_items.work_items_pkey type=p validated=t def=PRIMARY KEY (key)
+constraint work_items.work_items_seq_key type=u validated=t def=UNIQUE (seq)
+index work_items.work_items_pending valid=t def=CREATE INDEX work_items_pending ON work_items USING btree (seq) WHERE ((NOT completed) AND (NOT dead))
+index work_items.work_items_pkey valid=t def=CREATE UNIQUE INDEX work_items_pkey ON work_items USING btree (key)
+index work_items.work_items_seq_key valid=t def=CREATE UNIQUE INDEX work_items_seq_key ON work_items USING btree (seq)

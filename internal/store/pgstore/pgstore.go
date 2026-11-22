@@ -33,9 +33,11 @@ const (
 
 // Config configures [Open].
 type Config struct {
-	// URL is the connection string the store runs under: a runtime role that does not own the tables (see
-	// [Migrate]). Its search_path names the migrated schema, which Open pins on every connection. Open refuses a
-	// superuser or an owner unless AllowOwnerRuntime is set.
+	// URL is the connection string the store runs under: a runtime role that owns nothing in the database and holds
+	// exactly the privileges [Migrate] grants (see there), in a database dedicated to the factory. Its search_path
+	// names the migrated schema, which Open pins on every connection. The credential that logs in must be the role
+	// it runs as (no role= or session_authorization= parameter, no role default). Open refuses anything else
+	// unless AllowOwnerRuntime is set, and only waives the reasons listed there.
 	//
 	// What the role cannot do: alter or drop anything, disable a trigger, update or delete audit entries, consumed
 	// decisions or receipts, move a chain head, or append an entry that does not extend its chain (appends go
@@ -44,8 +46,13 @@ type Config struct {
 	// state rows and work items, which it must. Detecting a forged but well-formed entry needs an external signer,
 	// a later work item. Checkpoints only protect the prefix they cover.
 	URL string
-	// AllowOwnerRuntime lets Open run as a superuser or as an owner of the tables. It is for tests and development
-	// only, and needs a Logger: Open warns loudly each time.
+	// AllowOwnerRuntime lets Open run with a credential that is too powerful for who it is: a superuser, an owner
+	// of the schema, database or their objects (or a member of an owner), a member of any role, one with CREATEROLE,
+	// CREATEDB, REPLICATION or BYPASSRLS, one that can CREATE in the schema or database, one whose login credential
+	// differs from the role it runs as, or one holding privileges beyond the allowlist. It never waives the
+	// structure of the schema (relations, triggers, rules, row security, columns, constraints, indexes, functions,
+	// planted audit entries) or a privilege the role lacks. For tests and development only, and needs a Logger:
+	// Open warns loudly each time.
 	AllowOwnerRuntime bool
 	// Logger receives the owner-credential warning. Required with AllowOwnerRuntime.
 	Logger *slog.Logger
@@ -89,9 +96,11 @@ func timeoutParam(d, def time.Duration) string {
 }
 
 // Open connects both pools and checks, read-only, that the database is ready: every embedded migration applied
-// with a matching checksum, none newer, every protective trigger present and enabled, and the runtime role neither a
-// superuser nor an owner. It never creates or alters anything: run [Migrate] first, as the owner. The caller must
-// Close the store.
+// with a matching checksum, none newer, the schema exactly what the migrations create (relations, columns,
+// constraints, indexes, functions, and every protective trigger present and enabled always), no audit entry past
+// its chain's head, and the runtime role's effective privileges exactly the allowlist and nothing it should not be
+// (see ErrPrivilege). It checks once, at startup: it cannot see a grant made afterwards. It never creates or alters
+// anything: run [Migrate] first, as the owner. The caller must Close the store.
 func Open(ctx context.Context, cfg Config) (*Store, error) {
 	if cfg.Clock == nil {
 		return nil, errors.New("pgstore: nil clock")
@@ -245,13 +254,13 @@ func (s *Store) Lease(ctx context.Context, owner string, maxItems int, ttl time.
 	now := s.now()
 	rows, err := s.pool.Query(ctx, `
 WITH c AS (
-    SELECT key FROM work_items
+    SELECT key FROM ONLY work_items
     WHERE NOT completed AND NOT dead
       AND (leased_until IS NULL OR leased_until <= $1)
       AND (not_before IS NULL OR not_before <= $1)
     ORDER BY seq LIMIT $2
     FOR UPDATE SKIP LOCKED)
-UPDATE work_items w
+UPDATE ONLY work_items w
 SET generation = w.generation + 1, owner = $3, leased_until = $4
 FROM c WHERE w.key = c.key
 RETURNING w.seq, w.key, w.kind, w.payload, w.generation, w.leased_until, w.attempts`,

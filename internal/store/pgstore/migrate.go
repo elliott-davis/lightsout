@@ -186,10 +186,13 @@ func checkApplied(ctx context.Context, conn queryer, migs []migration) (int, err
 var roleName = regexp.MustCompile(`^[a-z_][a-z0-9_]{0,62}$`)
 
 // grantRuntimeRole lets role, which must already exist, use the schema in the connection's search_path with the
-// least privilege the store needs: SELECT only on the audit entries and chain heads (it appends through the
-// owner's audit_append function), SELECT and INSERT only on the consumed set and the delivery receipts, and
-// read-write on state and work. It does not own anything and cannot update, delete, truncate or alter the
-// append-only tables. It is idempotent, and it first revokes everything the role held on the schema's tables.
+// least privilege the store needs, as listed in runtimeTableGrants and runtimeFunctionGrants: SELECT only on the
+// audit entries and chain heads (it appends through the owner's audit_append function), SELECT and INSERT only on
+// the consumed set and the delivery receipts, and read-write on state and work. It does not own anything and cannot
+// update, delete, truncate or alter the append-only tables. It is idempotent, and it first revokes everything the
+// role held on the schema's tables, sequences and functions, and revokes TEMP on the database from PUBLIC when the
+// migrating credential owns it (otherwise the operator must: a role that can create temporary objects can shadow
+// the names a definer function or trigger refers to).
 func grantRuntimeRole(ctx context.Context, conn *pgxpool.Conn, role string) error {
 	if !roleName.MatchString(role) {
 		return fmt.Errorf("runtime role %q must match %s", role, roleName)
@@ -198,71 +201,44 @@ func grantRuntimeRole(ctx context.Context, conn *pgxpool.Conn, role string) erro
 	if err := conn.QueryRow(ctx, `SELECT current_schema()`).Scan(&schema); err != nil {
 		return fmt.Errorf("read current schema: %w", err)
 	}
+	var db string
+	var ownsDB bool
+	if err := conn.QueryRow(ctx, `SELECT current_database()::text,
+  pg_has_role(current_user, (SELECT datdba FROM pg_database WHERE datname = current_database()), 'USAGE')`).Scan(&db, &ownsDB); err != nil {
+		return fmt.Errorf("read current database: %w", err)
+	}
 	r, sch := pgx.Identifier{role}.Sanitize(), pgx.Identifier{schema}.Sanitize()
-	for _, q := range []string{
-		`GRANT USAGE ON SCHEMA ` + sch + ` TO ` + r,
-		`REVOKE ALL ON ALL TABLES IN SCHEMA ` + sch + ` FROM ` + r,
-		// The audit tables are readable only: appends go through audit_append, which runs as the owner.
-		`GRANT SELECT ON audit_entries, audit_chain_heads, schema_migrations TO ` + r,
-		`GRANT SELECT, INSERT ON consumed_decisions, deliveries TO ` + r,
-		`GRANT SELECT, INSERT, UPDATE ON state_rows, work_items TO ` + r,
-		`GRANT EXECUTE ON FUNCTION audit_lock_head(text), audit_append(text, bigint, integer, timestamptz, bytea, bytea, bytea) TO ` + r, //nolint:dupword // the function's argument types
-	} {
+	// PUBLIC holds TEMP on every database by default; revoking it needs the database's owner. Without that, the
+	// verification below fails and the operator must run REVOKE TEMPORARY ON DATABASE ... FROM PUBLIC as the owner.
+	for _, q := range grantStatements(sch, r, pgx.Identifier{db}.Sanitize(), ownsDB) {
 		if _, err := conn.Exec(ctx, q); err != nil {
 			return fmt.Errorf("grant to runtime role %s: %w", role, err)
 		}
 	}
-	return verifyGrants(ctx, conn, role, schema)
+	return verifyGrants(ctx, conn, role)
 }
 
-// verifyGrants checks the outcome rather than trusting the statements: the role can use the schema and has every
-// privilege it needs, and none that only the owner's functions may use, whether granted directly or inherited.
-func verifyGrants(ctx context.Context, conn queryer, role, schema string) error {
-	var usage bool
-	if err := conn.QueryRow(ctx, `SELECT has_schema_privilege($1::name, $2::name, 'USAGE')`, role, schema).Scan(&usage); err != nil {
-		return fmt.Errorf("check schema privilege of %s: %w", role, err)
-	}
-	if !usage {
-		return fmt.Errorf("runtime role %s cannot use schema %s after the grant", role, schema)
-	}
-	for table, privs := range map[string][]string{
-		"audit_entries": {privSelect}, tblHeads: {privSelect}, "schema_migrations": {privSelect},
-		"consumed_decisions": {privSelect, privInsert}, "deliveries": {privSelect, privInsert},
-		"state_rows": {privSelect, privInsert, "UPDATE"}, "work_items": {privSelect, privInsert, "UPDATE"},
-	} {
-		for _, p := range privs {
-			var ok bool
-			if err := conn.QueryRow(ctx, `SELECT has_table_privilege($1::name, $2, $3)`, role, table, p).Scan(&ok); err != nil {
-				return fmt.Errorf("check %s on %s for %s: %w", p, table, role, err)
-			}
-			if !ok {
-				return fmt.Errorf("runtime role %s lacks %s on %s after the grant", role, p, table)
-			}
-		}
-	}
-	for _, fn := range []string{
-		"audit_lock_head(text)",
-		"audit_append(text, bigint, integer, timestamptz, bytea, bytea, bytea)", //nolint:dupword // the function's argument types
-	} {
-		var ok bool
-		if err := conn.QueryRow(ctx, `SELECT has_function_privilege($1::name, $2::regprocedure, 'EXECUTE')`, role, fn).Scan(&ok); err != nil {
-			return fmt.Errorf("check EXECUTE on %s for %s: %w", fn, role, err)
-		}
-		if !ok {
-			return fmt.Errorf("runtime role %s cannot execute %s after the grant", role, fn)
-		}
-	}
-	forbidden, err := forbiddenPrivileges(ctx, conn, role)
+// verifyGrants checks the outcome rather than trusting the statements, and judges the role as Open will: its
+// effective privileges equal the runtime allowlist exactly (directly, by column, through PUBLIC or inherited), and
+// it is not a superuser, an owner, a member of any role, or otherwise too powerful. A role Open would refuse fails
+// here, at the operator's step, not at the service's startup.
+func verifyGrants(ctx context.Context, conn queryer, role string) error {
+	excess, missing, err := diffGrants(ctx, conn, role)
 	if err != nil {
 		return err
 	}
-	if len(forbidden) > 0 {
-		return fmt.Errorf("runtime role %s still holds privileges reserved for the owner's functions (through a group or default privileges?): %s", role, strings.Join(forbidden, ", "))
+	if len(missing) > 0 {
+		return fmt.Errorf("runtime role %s lacks required privileges after the grant: %s", role, strings.Join(missing, ", "))
+	}
+	if len(excess) > 0 {
+		return fmt.Errorf("runtime role %s still holds privileges beyond the allowlist (through a group or default privileges?): %s", role, listN(excess))
+	}
+	why, err := roleReasons(ctx, conn, role)
+	if err != nil {
+		return err
+	}
+	if len(why) > 0 {
+		return fmt.Errorf("runtime role %s would be refused by Open: %s", role, strings.Join(why, "; "))
 	}
 	return nil
 }
-
-const (
-	privSelect = "SELECT"
-	privInsert = "INSERT"
-)

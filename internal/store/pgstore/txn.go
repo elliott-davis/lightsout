@@ -98,7 +98,7 @@ func (t *txn) RecordDelivery(ctx context.Context, forge, deliveryID string, dige
 	}
 	if tag.RowsAffected() == 0 {
 		var have []byte
-		err = sp.QueryRow(ctx, `SELECT digest FROM deliveries WHERE forge = $1 AND delivery_id = $2`, forge, deliveryID).Scan(&have)
+		err = sp.QueryRow(ctx, `SELECT digest FROM ONLY deliveries WHERE forge = $1 AND delivery_id = $2`, forge, deliveryID).Scan(&have)
 		if err != nil {
 			_ = sp.Rollback(ctx)
 			return false, mapErr("read delivery", err)
@@ -130,7 +130,7 @@ func (t *txn) Get(ctx context.Context, kind store.Kind, id string) (store.Row, e
 	}
 	r := store.Row{Kind: kind, ID: id}
 	err := t.tx.QueryRow(ctx,
-		`SELECT repo, version, current_revision, approved_revision, schema_version, payload FROM state_rows WHERE kind = $1 AND id = $2`,
+		`SELECT repo, version, current_revision, approved_revision, schema_version, payload FROM ONLY state_rows WHERE kind = $1 AND id = $2`,
 		string(kind), id).Scan(&r.Repo, &r.Version, &r.CurrentRevision, &r.ApprovedRevision, &r.SchemaVersion, &r.Payload)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return store.Row{}, store.ErrNotFound
@@ -168,7 +168,7 @@ func (t *txn) Put(ctx context.Context, row store.Row, expect store.Version, expe
 			string(row.Kind), row.ID, row.Repo, row.CurrentRevision, row.ApprovedRevision, row.SchemaVersion, []byte(row.Payload)).Scan(&v)
 	} else {
 		err = t.tx.QueryRow(ctx,
-			`UPDATE state_rows SET repo = $3, version = version + 1, current_revision = $4, approved_revision = $5, schema_version = $6, payload = $7
+			`UPDATE ONLY state_rows SET repo = $3, version = version + 1, current_revision = $4, approved_revision = $5, schema_version = $6, payload = $7
 			 WHERE kind = $1 AND id = $2 AND version = $8 AND current_revision = $9 RETURNING version`,
 			string(row.Kind), row.ID, row.Repo, row.CurrentRevision, row.ApprovedRevision, row.SchemaVersion, []byte(row.Payload), int64(expect), expectRevision).Scan(&v)
 	}
@@ -224,7 +224,7 @@ func (t *txn) fenced(ctx context.Context, l store.Lease, set string, args ...any
 		return store.ErrLeaseLost
 	}
 	args = append([]any{l.Key, l.Generation, t.s.now()}, args...)
-	tag, err := t.tx.Exec(ctx, `UPDATE work_items SET `+set+` WHERE `+fence, args...)
+	tag, err := t.tx.Exec(ctx, `UPDATE ONLY work_items SET `+set+` WHERE `+fence, args...)
 	if err != nil {
 		return mapErr("update work item", err)
 	}

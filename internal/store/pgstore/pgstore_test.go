@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/url"
 	"os"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -28,6 +29,9 @@ import (
 	"github.com/elliott-davis/lightsout/internal/store/storetest"
 )
 
+// embeddedMigrations is how many migrations the package embeds (migrations/NNNN_*.sql).
+const embeddedMigrations = 2
+
 const envURL = "LIGHTSOUT_TEST_POSTGRES_URL"
 
 // baseURL returns the test database URL or skips the test, saying why.
@@ -41,9 +45,18 @@ func baseURL(t *testing.T) string {
 }
 
 // newSchema creates an empty schema for one test and returns a URL whose search_path is that schema.
+//
+// Every call gets a database of its own: Open's checks are database-wide (definer functions, event triggers, default
+// privileges, PUBLIC grants), so tests that share a database would see each other's setups.
 func newSchema(t *testing.T) string {
 	t.Helper()
-	base := baseURL(t)
+	dbURL, _ := newDatabase(t)
+	return newSchemaAt(t, dbURL)
+}
+
+// newSchemaAt is newSchema in the database base names.
+func newSchemaAt(t *testing.T, base string) string {
+	t.Helper()
 	var b [6]byte
 	if _, err := rand.Read(b[:]); err != nil {
 		t.Fatal(err)
@@ -338,8 +351,8 @@ func TestRestartMigrationsNoop_PG(t *testing.T) { // NFR-4
 	migrate(t, u, "")                     // a second migrate is a no-op
 	st2 := openOnly(t, u, clock.Now, nil) // and Open only checks
 	e2 := &storetest.Env{T: t, Store: st2, Clock: clock}
-	if n := countMigrations(t, admin(t, u)); n != 1 {
-		t.Errorf("schema_migrations has %d rows after a restart, want 1", n)
+	if n := countMigrations(t, admin(t, u)); n != embeddedMigrations {
+		t.Errorf("schema_migrations has %d rows after a restart, want %d", n, embeddedMigrations)
 	}
 	if h, err := e2.DecisionLog().Verify(t.Context()); err != nil || h.Seq != 1 {
 		t.Errorf("chain after restart: %+v %v", h, err)
@@ -366,8 +379,8 @@ func TestConcurrentMigrateAppliesOnce_PG(t *testing.T) { // NFR-4
 		})
 	}
 	wg.Wait()
-	if n := countMigrations(t, admin(t, u)); n != 1 {
-		t.Errorf("schema_migrations has %d rows, want 1", n)
+	if n := countMigrations(t, admin(t, u)); n != embeddedMigrations {
+		t.Errorf("schema_migrations has %d rows, want %d", n, embeddedMigrations)
 	}
 }
 
@@ -565,6 +578,7 @@ func newRole(t *testing.T, limit int) string {
 	mustExec(t, su, fmt.Sprintf(`CREATE ROLE %s LOGIN PASSWORD 'rt-pass' CONNECTION LIMIT %d`, name, limit))
 	t.Cleanup(func() {
 		ctx := context.WithoutCancel(t.Context())
+		dropTestDatabases(ctx, t, su) // grants inside them would keep the role from being dropped
 		_, _ = su.Exec(ctx, `DROP OWNED BY `+name)
 		_, _ = su.Exec(ctx, `DROP ROLE `+name)
 		_ = su.Close(ctx)
@@ -854,6 +868,15 @@ func TestAuditAppendIgnoresTempShadow_PG(t *testing.T) { // NFR-4 negative: a te
 	role := newRole(t, -1)
 	migrate(t, owner, role)
 	rc := admin(t, roleURL(t, owner, role))
+	// Open refuses TEMP, so this is defense in depth: even a role that could shadow the head cannot move it.
+	if _, err := rc.Exec(t.Context(), `CREATE TEMP TABLE lo_probe (a int)`); err == nil {
+		t.Error("Migrate left the runtime role able to create temporary tables")
+	}
+	var db string
+	if err := admin(t, owner).QueryRow(t.Context(), `SELECT current_database()`).Scan(&db); err != nil {
+		t.Fatal(err)
+	}
+	mustExec(t, admin(t, owner), `GRANT TEMPORARY ON DATABASE `+db+` TO `+role)
 	mustExec(t, rc, `CREATE TEMP TABLE audit_chain_heads (chain text, seq bigint, hash bytea)`)
 	mustExec(t, rc, `INSERT INTO pg_temp.audit_chain_heads VALUES ('decision', 77, decode(repeat('07', 32), 'hex'))`)
 	var seq int64
@@ -922,9 +945,45 @@ func privilegedRole(t *testing.T, stmts ...string) pgstore.Config {
 	migrate(t, owner, role)
 	adm := admin(t, owner)
 	for _, q := range stmts {
-		mustExec(t, adm, strings.ReplaceAll(q, "$ROLE", role))
+		q = strings.ReplaceAll(q, "$ROLE", role)
+		mustExec(t, adm, q)
+		if m := createRole.FindStringSubmatch(q); m != nil {
+			dropRoleOnCleanup(t, m[1]) // a role a statement created is dropped with the test
+		}
 	}
 	return pgstore.Config{URL: roleURL(t, owner, role), Clock: time.Now}
+}
+
+var createRole = regexp.MustCompile(`^CREATE ROLE (\w+)`)
+
+// dropRoleOnCleanup drops a role this test created (and what it owns or was granted in this database) at the end
+// of the test. Register it after the objects it depends on, so it runs before they are dropped.
+func dropRoleOnCleanup(t *testing.T, role string) {
+	t.Helper()
+	t.Cleanup(func() {
+		ctx := context.WithoutCancel(t.Context())
+		c, err := pgx.Connect(ctx, baseURL(t))
+		if err != nil {
+			return
+		}
+		defer func() { _ = c.Close(ctx) }()
+		dropTestDatabases(ctx, t, c)
+		_, _ = c.Exec(ctx, "REASSIGN OWNED BY "+role+" TO CURRENT_USER")
+		_, _ = c.Exec(ctx, "DROP OWNED BY "+role)
+		_, _ = c.Exec(ctx, "DROP ROLE "+role)
+	})
+}
+
+// testDatabases remembers, per test, the databases newDatabase created, so a role's cleanup can drop them first.
+var testDatabases sync.Map // test name -> []string
+
+func dropTestDatabases(ctx context.Context, t *testing.T, c *pgx.Conn) {
+	t.Helper()
+	v, _ := testDatabases.Load(t.Name())
+	names, _ := v.([]string)
+	for _, n := range names {
+		_, _ = c.Exec(ctx, "DROP DATABASE IF EXISTS "+n+" WITH (FORCE)")
+	}
 }
 
 func TestOpenRefusesEffectivePrivileges_PG(t *testing.T) { // SEC-10, NFR-4: what the role can do counts, not just who it is
@@ -965,7 +1024,7 @@ func TestMigrateRefusesRoleWithGroupGrants_PG(t *testing.T) { // NFR-4: Migrate 
 	mustExec(t, adm, `CREATE ROLE `+grp+` NOLOGIN`)
 	mustExec(t, adm, `GRANT UPDATE ON audit_entries TO `+grp)
 	mustExec(t, adm, `GRANT `+grp+` TO `+role)
-	t.Cleanup(func() { _, _ = adm.Exec(context.WithoutCancel(t.Context()), `DROP OWNED BY `+grp+`; DROP ROLE `+grp) })
+	dropRoleOnCleanup(t, grp)
 	if err := pgstore.Migrate(t.Context(), owner, role); err == nil {
 		t.Fatal("Migrate granted a role that still holds UPDATE on the audit entries through a group")
 	}

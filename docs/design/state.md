@@ -106,13 +106,13 @@ func WriteCheckpoints(ctx, st Store, sink checkpoint.Sink, opts VerifyOptions) e
     The service never runs it.
   - `pgstore.Open` only checks, read-only, and creates nothing. It refuses (`ErrSchema`) a database that is
     unmigrated, newer than the binary, has an altered migration, or has any protective trigger missing or disabled. It
-    refuses (`ErrPrivilege`) a runtime credential that is a superuser, or that owns or inherits the owner of the
-    tables, unless `Config.AllowOwnerRuntime` is set, which needs a logger and warns on every `Open`. The opt-out is for
+    refuses (`ErrPrivilege`) a runtime credential that is a superuser, that owns or is in the owner group of the
+    schema, the database or their objects, or that holds any privilege beyond the allowlist below, unless `Config.AllowOwnerRuntime` is set, which needs a logger and warns on every `Open`. The opt-out is for
     tests and development.
   - Every pooled connection pins `search_path` to the migrated schema and sets `lock_timeout` (default 5s) and
     `idle_in_transaction_session_timeout` (default 60s), both configurable.
 - **Roles and appends.**
-  - The runtime role does not own the tables. It has SELECT on the audit entries and chain heads, SELECT and INSERT on
+  - The runtime role does not own the tables, the schema or the database, and is not in their owner group. It has SELECT on the audit entries and chain heads, SELECT and INSERT on
     the consumed set and the receipts, and read-write on state and work.
   - Appends go through two SECURITY DEFINER functions that run as the owner, with `search_path` pinned (`pg_temp` last)
     and EXECUTE granted to the runtime role only. `audit_lock_head` locks and returns the head. `audit_append` checks
@@ -128,17 +128,72 @@ func WriteCheckpoints(ctx, st Store, sink checkpoint.Sink, opts VerifyOptions) e
   - The same credential can also append a correctly linked but malformed entry (one that verification rejects). Startup
     verification then fails, and the service refuses to start. That fails closed, but it is a lasting denial of service
     until an operator repairs the chain, so treat the runtime credential as able to halt the factory.
-  - `Open` judges the role by effective privileges, not by name: superuser, membership (including `NOINHERIT` and
-    `SET`-only) in a table owner, a superuser role or `pg_write_all_data`, `pg_write_server_files` or
-    `pg_execute_server_program`, and any privilege that only the owner's functions may use on the audit tables,
-    including ones inherited through a group. `Migrate` verifies the grants it made. `Open` also compares each
-    protective trigger's table, timing and events, and each protective function's body, security mode and pinned
-    `search_path`, with what the embedded migrations install.
-  - **Known gaps (WI-10d, [#6](https://github.com/elliott-davis/lightsout/issues/6)).** The check above is a denylist, and it
-    still passes two misconfigured runtime roles: one with **column-level** INSERT or UPDATE grants on the audit or state
-    tables, and one that **owns** (or is in the owner group of) the store schema or the database. Either can rewrite, wedge
-    or wipe the audit tables. Until WI-10d replaces the check with an exact allowlist, the operator must give the runtime
-    role no column grants, no ownership of the schema, database or its objects, and no CREATE on either.
+  - **Threat model.** `Open` catches a misconfigured runtime role or schema, once, at startup. It cannot see a grant
+    made after it ran, and it cannot stop a malicious superuser, who can do anything. The store database must be
+    **dedicated to the factory**, with exactly one store schema: several rules below are database-wide, so two store schemas in one database refuse each other (each one's `audit_append` is an extra SECURITY DEFINER function to the other).
+  - `Open` compares the role's **effective** privileges (direct, inherited, through PUBLIC or by column) to an exact
+    allowlist, not to a list of forbidden ones. One Go table (`runtimeTableGrants`, `runtimeFunctionGrants`) generates
+    `Migrate`'s GRANT statements, is checked by `Migrate` after granting (together with the who-the-role-is rules, so a
+    role `Open` would refuse fails at `Migrate`), and is what `Open` compares against:
+    - **Tables.** For every table, view or foreign table in the schema, and each of SELECT, INSERT, UPDATE, DELETE,
+      TRUNCATE, REFERENCES and TRIGGER (and MAINTAIN on PostgreSQL 17), `has_table_privilege` equals the allowlist
+      exactly. An extra privilege is `ErrPrivilege`. A missing one is `ErrSchema` (the grants were not applied).
+    - **Columns.** For each table and each of SELECT, INSERT, UPDATE and REFERENCES, `has_any_column_privilege` must
+      equal the table-level expectation, so a `GRANT UPDATE (col)` no longer slips past a table-level check. No
+      table, column, function or schema privilege may carry WITH GRANT OPTION.
+    - **Functions and sequences.** EXECUTE is held on `audit_append` and `audit_lock_head` and on no other function in
+      the schema, except trigger functions (PUBLIC has EXECUTE on those by default, and a trigger function cannot be
+      called outside a trigger). No sequence privilege is allowed: the identity column is filled under INSERT.
+    - **Who the role is.** The role must be the credential that logged in (`session_user`, `current_user` and the
+      authenticated user in `pg_stat_activity` agree), so a `role=` or `session_authorization=` parameter or an
+      `ALTER ROLE/DATABASE ... SET role` default on a stronger credential is refused. It must be a member of **no**
+      role at all (a group granted `WITH INHERIT FALSE`, a `NOINHERIT` role or an ADMIN-only grant reaches privileges
+      by `SET ROLE` that the effective-privilege check cannot see). It must not be a superuser or have CREATEROLE,
+      CREATEDB, REPLICATION or BYPASSRLS, and must not be in `pg_write_all_data`, `pg_write_server_files` or
+      `pg_execute_server_program`.
+    - **No ownership.** The role must own nothing in the database or the cluster (`pg_shdepend`: a function behind a
+      constraint or event trigger, an inheritance child, a schema, a database), must not be a member of the owner of
+      the store schema, the database (which includes `pg_database_owner`) or any relation, function or type in the
+      schema, and must not hold CREATE on the schema or the database. An owner can drop or alter the protection
+      triggers.
+    - **Database-wide.** Outside the store schema (the system catalogs, which only a superuser can modify, aside) the
+      role holds no write privilege (INSERT, UPDATE, DELETE, TRUNCATE, TRIGGER, REFERENCES, table or column) on any
+      relation, and has no CREATE on any schema, no CREATE or TEMP on the database, no USAGE on a foreign server or user
+      mapping, no SET or ALTER SYSTEM privilege on any parameter (`session_replication_role` changes which triggers
+      fire) and no default privilege (`pg_default_acl`) granted to it or to PUBLIC. TEMP matters because a temporary
+      table or function is searched before the real ones and can shadow what another owner's code refers to. PUBLIC has
+      TEMP on every database by default, so `Migrate` runs `REVOKE TEMPORARY ON DATABASE <db> FROM PUBLIC` when its
+      credential owns the database (and always revokes TEMP and CREATE from the runtime role). If it does not own the
+      database, the operator must run that REVOKE as the owner, or `Migrate`'s verification fails.
+    - **Code that runs as someone else.** The database must contain **no event trigger**, **no subscription** and **no
+      SECURITY DEFINER function other than `audit_append` and `audit_lock_head`**, in any schema (`pg_catalog` and
+      `information_schema` included), whether or not the role can EXECUTE it: a trigger or event trigger runs its
+      function as the owner without checking EXECUTE. Each is `ErrSchema`, and `AllowOwnerRuntime` does not waive it.
+    - **Exact protection set.** The schema holds exactly the expected tables (an unexpected table, view or foreign
+      table is `ErrSchema`), with no rewrite rules, no row-level security (enabled, forced or with policies) and no
+      inheritance, dependent view or foreign key crossing the schema boundary. Triggers are exactly the migrations':
+      no extra trigger on any table, and each expected one `ENABLE ALWAYS` (migration 0002, so
+      `session_replication_role = replica` cannot switch it off) with the expected table, timing and events, no WHEN
+      clause, no column list and no arguments. Each protected function must have the migrations' exact body and its
+      expected language, security mode, volatility, strictness, leakproofness, parallel safety, result and argument
+      types, and a `proconfig` that is exactly the pinned `search_path` for the SECURITY DEFINER functions and empty
+      for the others.
+    - **Exact columns, constraints and indexes.** For every relation, `Open` compares each column (type, nullability,
+      default expression, generated and identity kind, collation), constraint (type, validated, definition), index
+      (definition) and sequence to `schema.golden`, an embedded description generated from a fresh `Migrate`
+      (`go test ./internal/store/pgstore -run TestSchemaGolden -update`, never by hand; the file is
+      `internal/store/pgstore/testdata/schema.golden`). Columns print their collation schema-qualified with provider,
+      determinism and locale, and tables their access method, so a look-alike or non-deterministic collation or another
+      access method is caught. Storage options (`reloptions`: fillfactor, autovacuum) are not compared. A dropped unique
+      key, an added CHECK or a changed default is `ErrSchema` naming the first differing object. The golden is generated
+      on PostgreSQL 16 and **v1 supports PostgreSQL 16 only**: a new major version needs a regenerated golden and its
+      own CI job.
+    - **Planted entries.** In one statement (so one snapshot, immune to a racing append), `Open` refuses an audit entry
+      whose `seq` is past its chain's head (`ErrSchema`, wrapping `audit.ErrBrokenChain`).
+
+    `Config.AllowOwnerRuntime` waives only the who-the-role-is reasons (superuser, ownership, memberships, attributes,
+    CREATE, a session mismatch, privileges beyond the allowlist), with a warning, for tests and development. It never
+    waives a structural or missing-privilege failure.
 - **Reserved pool.** It is used for denial appends only (denial reads go over the worker pool). It keeps `ReservedConns` connections open (default 2) and `Open` fails if they cannot
   be established. The server's `max_connections` and the role's `CONNECTION LIMIT` must cover `MaxConns + ReservedConns`
   for every process.
