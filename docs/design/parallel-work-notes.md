@@ -129,3 +129,17 @@ colliding, and nothing enforced them.
   that both reach into one package are one serial chain (INT-14, PIP-10).
 - The fences should be enforced, not just written into prompts: a change's writable paths are a contract-like scope that
   the sandbox enforces (CON-7, SEC-3). The pusher scoping in WI-08 is the same idea at the forge level.
+
+## 11. Read-only reviewers still leave files in the shared tree
+
+**What happened.** Reviewers were told not to edit the repo and to run their probes in a scratch copy. Even so, a stray
+`internal/contract/zz_audit_test.go` (a failing probe) turned up in the working tree during the WI-04 review and later
+vanished. Some agent had dropped it there briefly. If a commit, a `make check` or another reviewer had run at that
+moment, it would have seen a failing test that belonged to no work item.
+
+**Product implication.**
+- "Read-only" has to be enforced, not requested. Reviewer sessions get read-only mounts of the code at the reviewed SHA
+  (SEC-3: reviewers are read-only, which the forge enforces), and any scratch work happens in a separate writable layer that is
+  discarded afterward.
+- Gate and inner-loop runs must start from a pristine checkout of the exact SHA, so stray files from any session can't
+  affect them (PIP-2, AGT-1).
