@@ -25,7 +25,7 @@ func TestExportedAPI_Allowlist(t *testing.T) {
 		"Action", "Actor", "ActorKind", "Backend", "ChainError", "Decision", "Entry", "File", "Hash", "Head", "Log",
 		"Memory", "Record", "RecordError", "SealFunc", "StoreError", "Subject", "SubjectKind", "Verdict",
 		// funcs
-		"CreateFile", "New", "NewMemory", "OpenFile",
+		"CheckSuccessor", "CreateFile", "New", "NewMemory", "OpenFile",
 		// consts
 		"ActionAdmin", "ActionDecision", "ActionLink", "ActionModelCall", "ActionRepoWrite", "ActionStateTransition",
 		"ActionToolCall", "ActorAgent", "ActorExternal", "ActorFactory", "ActorHuman", "FormatVersion", "MaxAttrKeyBytes", "MaxAttrs",

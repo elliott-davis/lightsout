@@ -26,14 +26,14 @@ lands. Design notes for larger items live in [docs/design/](design/).
 | WI-01 | Path globs | CON-7, CON-12 (support) | — | done (7966634) |
 | WI-02 | Contract schema, parsing and discovery | CON-11, CON-4, CON-1 | — | done |
 | WI-03 | Effective contract resolver and relational validation | CON-3, CON-5, CON-7, CON-9, CON-12, AGD-3, SEC-5 | WI-01, WI-02 | done |
-| WI-02a | Accept numeric-looking gate pins as strings | CON-4 | WI-02 | todo |
-| WI-03a | Bound cross-stack source merging in Resolve | CON-3 (availability), SEC-1 | WI-03 | todo |
+| WI-02a | Accept numeric-looking gate pins as strings ([#1](https://github.com/elliott-davis/lightsout/issues/1)) | CON-4 | WI-02 | todo |
+| WI-03a | Bound cross-stack source merging in Resolve ([#2](https://github.com/elliott-davis/lightsout/issues/2)) | CON-3 (availability), SEC-1 | WI-03 | todo |
 | WI-04 | Incremental validation, explain, gate registry check, CLI | CON-13, CON-4 | WI-03 | done |
-| WI-04a | Incremental scope versus the whole-set compile budget | CON-13 (availability) | WI-04 | todo |
+| WI-04a | Incremental scope versus the whole-set compile budget ([#3](https://github.com/elliott-davis/lightsout/issues/3)) | CON-13 (availability) | WI-04 | todo |
 | WI-05 | Append-only audit log | NFR-4, RUN-5, AGT-6 | — | done |
 | WI-06 | Identities, roles and revision-bound decisions | SEC-10, NFR-5 | WI-05 | done |
 | WI-07 | Install config, role profiles and admission | RUN-6, AGT-7, NFR-2, SEC-1, CON-9, CON-5 | WI-03 | done |
-| WI-07a | Install validation hardening (forge hosts, floating versions, loopback aliases) | SEC-1, AGT-7 | WI-07 | todo |
+| WI-07a | Install validation hardening (forge hosts, floating versions, loopback aliases) ([#4](https://github.com/elliott-davis/lightsout/issues/4)) | SEC-1, AGT-7 | WI-07 | todo |
 
 - **WI-01** `internal/pathglob`: anchored globs (`*`, `?`, `**`), strict syntax, matching, and a conservative
   containment proof that fails closed. See [design/contracts.md](design/contracts.md).
@@ -87,9 +87,13 @@ lands. Design notes for larger items live in [docs/design/](design/).
 | WI | Work item | Requirement IDs | Depends on | Status |
 | --- | --- | --- | --- | --- |
 | WI-08 | Forge interface and in-memory fake | INTG-1 (interface) | WI-06 | done |
-| WI-08a | Forge fake: remaining denial tests and fidelity | SEC-2, SEC-3, SEC-11 | WI-08 | todo |
+| WI-08a | Forge fake: remaining denial tests and fidelity ([#5](https://github.com/elliott-davis/lightsout/issues/5)) | SEC-2, SEC-3, SEC-11 | WI-08 | todo |
 | WI-09 | CODEOWNERS ownership resolution | CON-2 (ownership) | WI-08 | done |
-| WI-10 | State store and event loop | NFR-5 (event paths), NFR-4 (durable store) | WI-05, WI-08 | todo |
+| WI-10 | State store and event loop (lands as WI-10a–c, see design/state.md) | NFR-5 (event paths), NFR-4 (durable store) | WI-05, WI-08 | in progress |
+| WI-10a | Store: interfaces, PostgreSQL and in-memory, audit backend, checkpoints | NFR-4, NFR-5 | WI-05, WI-08 | done |
+| WI-10b | Webhook ingestion over an OpenAPI-first chi surface | NFR-5 | WI-10a | todo |
+| WI-10c | Event loop | NFR-5 | WI-10b | todo |
+| WI-10d | Store privilege check: exact allowlist, no owning roles ([#6](https://github.com/elliott-davis/lightsout/issues/6)) | NFR-4, NFR-5 | WI-10a | todo |
 | WI-11 | Contract activation and protected policy path | CON-2, CON-6, CON-10 (review path) | WI-04, WI-06, WI-09, WI-10 | todo |
 | WI-12 | GitHub adapter | INTG-1 | WI-08 | todo |
 
@@ -133,6 +137,7 @@ lands. Design notes for larger items live in [docs/design/](design/).
   From WI-08: map GetComment/GetReview re-reads to Integrity at execution time. EditUnknown, edited and deleted all deny. Check that Comment.Repo/Issue match the subject. Key issues by NodeID. ErrIncomplete and RateLimitError mean block and retry, never a partial result.
   From WI-07: implement install activation. It needs `quorum` granted OpActivateInstall decisions from distinct principals, taken only from the active revision's RoleSource, and consumed together with a compare-and-swap of the active generation in one transaction. Target.Revision = install.ActivationRevision(installID, activeGeneration, candidateCommit). Bootstrap happens once; refuse a second. Read the install config only via install.Load at a full SHA, refuse an empty InstallRevision on any production path, and store the install revision with every decision and evidence row. The quorum helper counts distinct principals, never grants; authz.Grant has no Principal field, so carry it alongside. Denial tests: the same approver twice; a member only of the candidate revision; a bot.
   From WI-15: review.Evaluate fails closed on any signed record inconsistent with the snapshot, but can't detect a record deleted outright or one whose signature was corrupted. Build the review snapshot from audited store records with a completeness proof (a per-change chain or sequence range), and set Snapshot.Complete only when that proof checks.
+  WI-10a (the store) is done; WI-10d ([#6](https://github.com/elliott-davis/lightsout/issues/6)) closes its two open HIGH findings in the startup privilege check and must land before WI-10c serves real traffic. CI runs the PostgreSQL tests in the `postgres` job (`make test-postgres`); making it a required check is [#12](https://github.com/elliott-davis/lightsout/issues/12).
 - **WI-11** Activation of a contract revision requires approval of that exact revision by a current owner,
   under the previously trusted ownership and gate rules. A product change can never supply the policy that
   authorizes it (CON-2). Protected paths (contracts, CI definitions, CODEOWNERS) fail a product PR, and a protected
@@ -162,7 +167,7 @@ lands. Design notes for larger items live in [docs/design/](design/).
 | WI-13 | Gate-of-record evaluation | PIP-2, CON-4 (execution match), SEC-11 (foreign check) | WI-03, WI-08 | done |
 | WI-14 | Path, protected-path and PR shape gates | CON-7, CON-6, INT-18, INT-19 | WI-11 | todo |
 | WI-15 | Review policy and evidence rule | AGT-3, AGT-4, AGT-5, SEC-5, AGD-3, CON-8, INT-20 | WI-03, WI-06 | done |
-| WI-15a | Review evidence: dismissals and cross-claim confirmations | AGT-4, SEC-11 | WI-15 | todo |
+| WI-15a | Review evidence: dismissals and cross-claim confirmations ([#7](https://github.com/elliott-davis/lightsout/issues/7)) | AGT-4, SEC-11 | WI-15 | todo |
 | WI-16 | Dark-merge oracle evaluation | PIP-13, PIP-4, INT-10 (comparison) | WI-13 | todo |
 | WI-17 | Non-switchable changes | PIP-9 | WI-14, WI-15 | todo |
 | WI-18 | Verify orchestrator and merge | PIP-1, PIP-2, SEC-2, SEC-4, NFR-6 | WI-13–WI-17, WI-10 | todo |
