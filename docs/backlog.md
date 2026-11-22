@@ -26,6 +26,7 @@ lands. Design notes for larger items live in [docs/design/](design/).
 | WI-01 | Path globs | CON-7, CON-12 (support) | — | done (7966634) |
 | WI-02 | Contract schema, parsing and discovery | CON-11, CON-4, CON-1 | — | done |
 | WI-03 | Effective contract resolver and relational validation | CON-3, CON-5, CON-7, CON-9, CON-12, AGD-3, SEC-5 | WI-01, WI-02 | done |
+| WI-02a | Accept numeric-looking gate pins as strings | CON-4 | WI-02 | todo |
 | WI-03a | Bound cross-stack source merging in Resolve | CON-3 (availability), SEC-1 | WI-03 | todo |
 | WI-04 | Incremental validation, explain, gate registry check, CLI | CON-13, CON-4 | WI-03 | done |
 | WI-04a | Incremental scope versus the whole-set compile budget | CON-13 (availability) | WI-04 | todo |
@@ -47,6 +48,7 @@ lands. Design notes for larger items live in [docs/design/](design/).
   ancestor directory. A path that fails `ValidatePath` (including one over 256 segments) is an error, never
   "allowed", and gets a denial test. Re-validate any contract given to the resolver, since `NewSet` accepts
   hand-built ones. Document that `*.pem` is anchored and doesn't match `certs/key.pem`.
+- **WI-02a** Found during WI-13. A contract `pin` written as bare digits, or as something YAML reads as a number (`1e5`-style digits), becomes a YAML number, so the schema rejects it. A real all-digit SHA is astronomically rare, but the schema should accept the string form: document "quote the pin" or coerce scalars for pin fields, and add a test.
 - **WI-03a** The first WI-03 follow-up, which the user deferred from WI-03 on 2026-11-21. The change-level merge in `Resolve`
   (`mergeObligations`, `mergeOracles`, `mergeRequirements`) re-clones and re-sorts a shared identity's source list on every
   duplicate, and charges only the obligation count. With 1000 contracts sharing 64 gates per stage, and a change touching 969 paths,
@@ -110,6 +112,7 @@ lands. Design notes for larger items live in [docs/design/](design/).
   - **Fidelity of RecordMerge outside a group.** Refuse drafts, octopus merges and another group's candidate, or mark every PR whose head landed as merged.
   - **Fidelity of AddCheckRun.** Reject a conclusion unless the status is completed, and reject an unknown head SHA.
   - **Symlinked .github.** Refuse a symlink or gitlink at a proper prefix of a workflow or denied path (`.github`, `.github/actions`).
+  From WI-13: the fake lists only records whose CandidateSHA is bound, and supersedes only when the attempt parses and the producer and workflow match, so a newer unbound attempt can drop out and let an older success pass (impossible on real GitHub). Supersede on (RunID, JobKey) alone, with a fake-forge test.
 - **WI-09** Parse CODEOWNERS (gitignore semantics) at a trusted revision and resolve each path's current owners.
   From WI-06: implement the owner roles of `authz.RoleSource` (`path-owner`, `code-owner`, `contract-owner`). Resolve by forge and stable ID, mapping the ID to its current login and team membership at execution time with no cache. Return true only when the principal owns every path in `Target.Paths`, and deny on any lookup error. Define how code-owner and contract-owner differ. Negative tests: a renamed login, a recycled login, and a team removal between decision and execution.
   From WI-08: use IdentityReader live with no cache. Read CODEOWNERS only via TreeReader.Tree at a full SHA. A symlinked CODEOWNERS (ErrSymlink) denies. A revoked actor (ErrNotFound) denies.
@@ -144,12 +147,18 @@ lands. Design notes for larger items live in [docs/design/](design/).
   publishing and the merge queue. Contract tests run the same suite against the fake and against recorded fixtures.
   From WI-08: implement forgetest.Harness over recorded fixtures. Tests: url.PathEscape of identity values; an invalid tree name means Tree errors; modes 120000/160000; Compare beyond 3000 files and truncated trees are recovered or give ErrIncomplete. JobExecution.Provenance is Complete only when every field, including reusable-workflow repo/commit, came from the API.
   From WI-09: verify CODEOWNERS wildcard-last-segment descent (`*.js` vs `lib.js/x.ts`), inline `# comment` among owners, and unknown-owner lines against recorded GitHub behavior. IsTeamMember maps GitHub's `state: pending` to false (active membership only).
+  From WI-13:
+    - **Callee identity.** Fill JobExecution's WorkflowRepo (stable repo ID), WorkflowPath and WorkflowCommit with the executed (callee) workflow. Bind job_workflow_ref and job_workflow_sha to the specific job, for example through job-scoped OIDC claims joined by check-run ID; if that fails, Provenance is Incomplete.
+    - **Caller binding.** Either add the caller's repo, path and commit plus an inputs digest, or allow only org-required, input-free reusable workflows as gates and reject other reusable gates at registration.
+    - **Registration rules, at the pinned commit:** fixed, unique rendered names; no `if:` on gate-defining work; no continue-on-error. Resolve a numeric workflowId to `<repo-id>:<path>`, or reject it.
+    - **Conclusions.** Map stale, action_required and startup_failure to a completed non-success value, never ConclusionNone. ListJobExecutions lists Actions jobs only. Set SupersededBy on every older attempt.
+    - **Conformance:** an incomplete record's RunAttempt equals its run's attempt (gate's older-records skip relies on it). Fixtures: matrix names, a single-leg rerun, a reusable callee, a skipped job with started_at set, and the twin-ambiguity cases through the fake.
 
 ## Phase 3: Verify
 
 | WI | Work item | Requirement IDs | Depends on | Status |
 | --- | --- | --- | --- | --- |
-| WI-13 | Gate-of-record evaluation | PIP-2, CON-4 (execution match), SEC-11 (foreign check) | WI-03, WI-08 | todo |
+| WI-13 | Gate-of-record evaluation | PIP-2, CON-4 (execution match), SEC-11 (foreign check) | WI-03, WI-08 | done |
 | WI-14 | Path, protected-path and PR shape gates | CON-7, CON-6, INT-18, INT-19 | WI-11 | todo |
 | WI-15 | Review policy and evidence rule | AGT-3, AGT-4, AGT-5, SEC-5, AGD-3, CON-8, INT-20 | WI-03, WI-06 | todo |
 | WI-16 | Dark-merge oracle evaluation | PIP-13, PIP-4, INT-10 (comparison) | WI-13 | todo |
@@ -183,6 +192,11 @@ lands. Design notes for larger items live in [docs/design/](design/).
   baseline gates (SEC-4). Every agent commit carries the contract's trailer (NFR-6). Issues and Checks show the stage
   and disposition (PIP-1).
   From WI-08: BranchRules(default) must be Complete, require the merge queue, require the factory verdict by the factory App ID, and have no agent bypass actors. Empty rules mean a failing install. Read NFR-6 trailers from DiffReader.Commits. Add check output fields for PIP-1.
+  From WI-13:
+    - **Target and evidence.** Build gate.Target from the PR's own queue member (Members[i].CandidateSHA), never the group tip. Any fetch error means Evidence{Complete:false}.
+    - **Before publishing:** check PolicyRevision and InstallRevision against the current trusted revisions, recheck gate registration, re-evaluate right before publishing, and publish on the CandidateSHA.
+    - **Dispositions.** pending means retry; blocked means repair or rerun; error means retry, then audit. Unvouched running records hold a change at pending indefinitely, so add a pending-timeout policy with escalation and an audit entry.
+    - **Merge** requires the gate plus WI-14 (CON-6 also stops caller-workflow tampering for reusable gates), WI-15 and WI-16. Audit the Decision; escape gate names and reasons in check output. SEC-4 scans are registered factory-owned baseline gates.
 
 ## Phase 4: Intake and holdouts
 
