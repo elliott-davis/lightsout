@@ -1,0 +1,5 @@
+apiVersion: factory/v1alpha1
+kind: Contract
+paths:
+  writable: []
+lightsOn: true

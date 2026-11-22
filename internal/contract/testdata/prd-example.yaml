@@ -1,0 +1,35 @@
+# .factory.yaml
+apiVersion: factory/v1alpha1
+kind: Contract
+paths:
+  writable: ["**"]
+  readOnly: ["api/protos/**"]      # agents may propose; a path owner approves (CON-7)
+  forbidden: ["deploy/**"]
+  sensitive: ["src/checkout/payment/**"]  # security reviewer required (SEC-5)
+  generated: ["gen/**"]            # excluded from the review budget (INT-19)
+gates:
+  verify:
+    - name: build-and-test
+      producerId: github-app:12345
+      workflowId: 67890
+      workflowRevision: 'a4ac7e7ccc7544f12d78ba75fd84289a903511f3'
+      checkId: build-and-test      # job identity within the registered workflow
+      mandatory: true
+    - name: lint
+      producerId: github-app:12345
+      workflowId: 67890
+      workflowRevision: 'a4ac7e7ccc7544f12d78ba75fd84289a903511f3'
+      checkId: lint
+      mandatory: false
+  darkMergeOracle:                 # existing trusted CI comparison (PIP-13)
+    producerId: github-app:12345
+    workflowId: 67890
+    workflowRevision: 'a4ac7e7ccc7544f12d78ba75fd84289a903511f3'
+    checkId: checkout-contract
+    observables: [responses, reads, writes, events, queued-jobs]
+agents:
+  verify: [security-reviewer]      # adds to the parent's list, never removes
+lightsOn: false
+overrides:                         # lowest level wins
+  switchStaleDays: 45
+  reviewBudgetLines: 300

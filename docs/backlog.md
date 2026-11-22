@@ -23,8 +23,8 @@ lands. Design notes for larger items live in [docs/design/](design/).
 
 | WI | Work item | Requirement IDs | Depends on | Status |
 | --- | --- | --- | --- | --- |
-| WI-01 | Path globs | CON-7, CON-12 (support) | — | in progress |
-| WI-02 | Contract schema, parsing and discovery | CON-11, CON-4, CON-1 | — | in progress |
+| WI-01 | Path globs | CON-7, CON-12 (support) | — | done (7966634) |
+| WI-02 | Contract schema, parsing and discovery | CON-11, CON-4, CON-1 | — | done |
 | WI-03 | Effective contract resolver and relational validation | CON-3, CON-5, CON-7, CON-9, CON-12, AGD-3, SEC-5 | WI-01, WI-02 | todo |
 | WI-04 | Incremental validation, explain, gate registry check, CLI | CON-13, CON-4 | WI-03 | todo |
 | WI-05 | Append-only audit log | NFR-4, RUN-5, AGT-6 | — | todo |
@@ -228,6 +228,9 @@ lands. Design notes for larger items live in [docs/design/](design/).
 - **Infrastructure-bound items** (WI-28 to WI-32, WI-38, WI-39) need a Kubernetes cluster with kagent, Agent
   Substrate and agentgateway. Their code and unit tests can be written against fakes. Their acceptance evidence
   cannot be produced offline in this repo's `make check`.
+- **Known limitation (WI-02):** `contract.Load` gathers every problem before applying the 100-problem cap. The
+  worst case is 1000 files of 64 KiB, so memory is bounded but generous. Contract files are protected paths that
+  only trusted committers can add (CON-6). Revisit if loading ever runs on untrusted trees.
 - **Later-phase IDs** (RUN-7, AGD-2/4/5, INT-13/22, PIP-6/7/8/12, FLG-4–7, REC-5, SEC-7/8, COST-6, POR-*,
   INTG-2–4, NFR-10) are out of scope. Where v1 types should leave room for them (such as release stages in the
   manifest), the item notes it rather than building it.

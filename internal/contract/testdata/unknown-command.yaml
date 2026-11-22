@@ -1,0 +1,6 @@
+apiVersion: factory/v1alpha1
+kind: Contract
+gates:
+  verify:
+    - name: build
+      command: make test
