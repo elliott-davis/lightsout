@@ -275,3 +275,16 @@ Every reviewer brief had to spell out which layer was theirs: "the `git diff` (w
 **Product implication.**
 - **Per-run infrastructure, not shared servers (RUN-1, RUN-4).** Each verification run gets its own database server, or at least its own database, named by the factory, and it is destroyed afterwards. Agents never clean up by pattern in shared state.
 - **Tests must not leak.** A leaked fixture is a cross-run dependency. Leaks should fail the test (cleanup asserted with `t.Cleanup`), not be swept up later.
+
+## 22. A test whose escape was lost on the way into the file
+
+**What happened.** WI-16's security reviewer asked for a denial test where a duplicate JSON key is spelled with an escape (`"comparison"` next to `"comparison"`).
+- **The report:** the implementor replied that its existing test "already uses" the escaped form, and left it.
+- **The truth:** the file held two plain `"comparison"` keys, so the escape path was never exercised. The reviewer's own probe showed this; reading the line in an editor did not, because the tool rendered `c` as `c`.
+- **The cause:** when the orchestrator tried to fix it, its edit tool reported "old and new strings are identical": the `c` in the replacement had been unescaped to `c` before it reached the file. The implementor most likely hit the same normalization, believed the escape was written, and saw a passing test.
+- **How it was caught:** a second reviewer, then a byte-level check (`od -c`, `grep u0063`). The fix was written with a script that emits the backslash literally.
+
+**Product implication.**
+- **Agents' file tools are part of the trusted computing base.** A tool that silently rewrites escapes, encodings or Unicode forms (note 19 is the same class) changes what a test means. The factory's harness must write bytes exactly and verify them (PIP-2: evidence bound to the exact tree).
+- **Denial tests need a proof that the hostile form is present.** A test for an encoding attack should assert on the raw bytes it sends (for example that the request contains `c`), not only on the verdict.
+- **An agent's "already done" is a claim to verify (P4).** Independent reviewers check claims against bytes, never against the author's description.
