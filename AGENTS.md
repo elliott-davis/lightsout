@@ -40,6 +40,11 @@ The PRD's requirement IDs (`CON-3`, `PIP-2`, `SEC-10`, ...) are stable. Use them
 - No package-level mutable state and no `init()`. Pass configuration, clocks (`func() time.Time` or a small
   `Clock` interface) and randomness in explicitly. Timers, trains and staleness rules must be testable without sleeping.
 - The audit log (NFR-4, RUN-5, AGT-6) is a domain concept with its own append-only interface. Don't treat it as `slog` output.
+- **API first.** Every HTTP API the factory serves (control-plane API, admin, callbacks, webhook receivers) is designed
+  as an OpenAPI document in the repo before it is implemented, and that document is the contract: server code
+  conforms to it, and tests check the served routes against it. Change the spec first, then the code. Server types
+  and handler interfaces are generated from the spec with oapi-codegen (chi strict-server); never hand-edit them.
+- **REST uses [chi](https://github.com/go-chi/chi)** (`github.com/go-chi/chi/v5`) for routing and middleware. Don't add another web framework.
 
 ## Go conventions
 

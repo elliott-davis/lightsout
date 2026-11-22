@@ -74,6 +74,9 @@ lands. Design notes for larger items live in [docs/design/](design/).
 - **WI-09** Parse CODEOWNERS (gitignore semantics) at a trusted revision and resolve each path's current owners.
 - **WI-10** PostgreSQL-backed state for issues, changes, features and trains; idempotent webhook ingestion with
   signature checks; one authorization path for issue events, checks, callbacks, API and admin actions (NFR-5).
+  The first HTTP surface: write its OpenAPI document first and serve it with chi (AGENTS.md, API first). Generate
+  types and handler interfaces with oapi-codegen's chi strict-server output (tool pinned in `tools/go.mod`, plus its
+  runtime module); justify both in the PR description.
 - **WI-11** Activation of a contract revision requires approval of that exact revision by a current owner,
   under the previously trusted ownership and gate rules. A product change can never supply the policy that
   authorizes it (CON-2). Protected paths (contracts, CI definitions, CODEOWNERS) fail a product PR, and a protected
