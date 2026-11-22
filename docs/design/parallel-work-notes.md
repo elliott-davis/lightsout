@@ -115,3 +115,17 @@ partial results per item, wait for the rest of the batch, and avoid starting a f
 **Product implication.**
 - The control plane's event loop (WI-10) needs per-change state that holds which reviews are pending and which have returned.
 - It must not start a coding run while reviews of the same revision are open, and it must treat a new push as invalidating any reviews in flight (PIP-2).
+
+## 10. Contention on a shared package forces serialization
+
+**What happened.** WI-07 (install config) is a new package, but it must also edit `internal/contract`. It moves the hardened
+YAML parser into a shared `internal/yamlsafe`, and it adds the install revision to `contract.Baseline`. WI-04 was mid-flight in
+`internal/contract` at the time, so WI-07 couldn't start until WI-04 was reviewed and committed, even though the two items are
+logically independent. Every brief also had to carry a "don't touch package X" fence. Those fences were all that stopped agents from
+colliding, and nothing enforced them.
+
+**Product implication.**
+- The planner must plan from the *files a change will touch*, including refactors of shared helpers, not from feature boundaries. Two features
+  that both reach into one package are one serial chain (INT-14, PIP-10).
+- The fences should be enforced, not just written into prompts: a change's writable paths are a contract-like scope that
+  the sandbox enforces (CON-7, SEC-3). The pusher scoping in WI-08 is the same idea at the forge level.
