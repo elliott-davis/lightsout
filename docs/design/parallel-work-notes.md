@@ -143,3 +143,98 @@ moment, it would have seen a failing test that belonged to no work item.
   discarded afterward.
 - Gate and inner-loop runs must start from a pristine checkout of the exact SHA, so stray files from any session can't
   affect them (PIP-2, AGT-1).
+
+## 12. A commit needs every agent to be quiet
+
+**What happened.** WI-04 was approved and ready to commit while the WI-09 implementor was editing tracked files in
+`internal/forge` and new files in `internal/codeowners`. The pre-commit hook temporarily stashes unstaged tracked files and
+restores them afterwards, and it format-checks the whole tree. Running it under an active agent could have clobbered that
+agent's edits during the stash window, or failed on its half-written files. So the commit waited until no agent was writing,
+which in practice made the shared tree a global lock held across work items.
+
+**Product implication.**
+- With one shared tree, every commit serializes behind every in-flight change. The only way to scale is per-change
+  workspaces, where a commit touches only its own tree (RUN-2).
+- Repo hooks that rewrite or stash the working tree assume a single writer. Factory sessions must not depend on them
+  (SEC-9 already says repo hooks never run in factory sessions); the factory's own checks run on the change's tree in its sandbox.
+
+## 13. A human-held credential stalls every commit
+
+**What happened.** Commits are SSH-signed through 1Password. Overnight, with the user away, signing began failing
+(`1Password: failed to fill whole buffer`), because approval needs the user. Work kept going, but nothing could be committed. Finished,
+approved work items then had to share the tree with newer in-progress ones that edit the same files. To keep the commits separable,
+the finished item was staged exactly in git's index, later edits stayed unstaged on top, and a written plan records the commit order
+for when signing works again.
+
+**Product implication.**
+- The factory's write path must not hinge on a credential that needs a human in the loop at commit time. Signing for
+  factory-made commits uses a workload identity issued at egress (RUN-4, RUN-5), not a person's key.
+- When a required external step is unavailable, the factory needs a durable queue of ready-but-unlanded changes. Each one is pinned to
+  its exact tree, in dependency order, so nothing is lost or merged by accident when the step comes back (PIP-1, INT-14). A
+  pile-up in one working directory is the failure mode to design out.
+
+## 14. Three work items in one tree turn "the diff" into layers
+
+**What happened.** With commits blocked, three work items lived in one checkout at once:
+- WI-04: finished, staged in the index.
+- WI-07: unstaged edits stacked on WI-04's staged files, plus new untracked packages.
+- WI-09: unstaged edits in other packages, plus its own untracked package.
+
+Every reviewer brief had to spell out which layer was theirs: "the `git diff` (working tree against the index) for these paths, these untracked files, and not `--cached`". One mistake in that recipe would mean reviewing someone else's change, or missing part of your own.
+
+**Product implication.**
+- A change has to be a first-class object with its own base SHA and tree, never a slice of a shared working directory. Reviewers receive `(base, head)` SHAs and review `Compare(base, head)` (WI-08), so they can't pick the wrong layer.
+- Dependent changes stack explicitly: WI-07's base is WI-04's head commit, and that's recorded in the plan graph (INT-14), not implied by the index.
+
+## 15. One item's dependency bump changes everyone's environment
+
+**What happened.** WI-10a added `pgx`. Go's minimum version selection then raised `golang.org/x/text` from v0.14.0 to v0.41.0 in the shared `go.mod`.
+- **The impact:** `internal/contract` uses x/text's Unicode case-folding and normalization tables for its security-relevant deny-list matching. From that moment, every other in-flight item (WI-07, WI-09) was being tested against different Unicode tables than the ones its own commit will carry. The staged WI-04 commit will carry the old `go.mod`.
+- **How it was caught:** by watching `go.mod`. No test failed.
+
+**Product implication.**
+- The dependency graph is shared, non-switchable state (PIP-9, PIP-10). A change that alters `go.mod`/`go.sum`, or any lockfile, overlaps every other change in the repo and must be serialized against them, the same as a generated file.
+- Verify must run each change against its own exact module graph at the merge-group candidate, never a workspace's (PIP-2).
+- Dependency changes need their own review lens: what else moved transitively, and does any security-relevant behaviour depend on the moved module? The factory should surface transitive bumps in the PR, not just the direct addition (SEC-4's dependency scanning, extended to "what changed").
+
+## 16. Independent reviewers collide in a shared scratch directory
+
+**What happened.** During WI-13's second review round, the security reviewer and the Go reviewer were each told to "work in a copy under the scratchpad". Both picked the same name, `scratchpad/r2/`.
+- **The collision:** the security reviewer's exploit tests (`zz_r2_test.go`) appeared in the Go reviewer's copy, and the Go reviewer's mutant files were deleted.
+- **How it was caught:** the Go reviewer spotted it and discarded its results from that directory. Otherwise, the mutation survival rates and exploit verdicts would have silently mixed two reviews.
+
+**Product implication.**
+- "Independent review in a separate context" (AGT-5, SEC-12) has to include separate *filesystem* state, not just a separate conversation.
+- **Isolated scratch space:** each reviewer, verifier or holdout run gets a scratch space named by the factory (job ID plus attempt), never one the agent chooses. That space is destroyed afterwards (RUN-1, RUN-4).
+- **Scoped findings:** evidence that a reviewer reports, such as an exploit test or a mutant result, must be bound to the workspace digest it ran in. Then a finding from a contaminated workspace is detectable instead of trusted (PIP-2's evidence-binding discipline, applied to reviews).
+
+## 17. A failure nobody can attribute
+
+**What happened.** While the WI-15 implementor was verifying its work, one `make test` run failed in a package it hadn't touched, and the next two runs passed.
+- **Missing evidence:** it didn't record which test failed or the shuffle seed.
+- **Repro attempts:** five more full race runs on the same tree passed.
+- **Environment:** several reviewers and implementors were running tests and mutation suites on the same machine at the time, so the failure could have come from CPU load, a half-written file another agent was editing, or a real timing bug.
+- **Status:** none of those can be ruled out now.
+
+**Product implication.**
+- **Capture the run identity.** A failing gate run is evidence only if it carries everything needed to reproduce it: the shuffle seed, the exact tree digest, and the resource class it ran on (PIP-2, P4).
+- **Isolate verification runs.** The factory must never run verification in a workspace that other agents can write to, or on a host whose load isn't accounted for (RUN-1).
+- **Track flaky gates explicitly.** Retrying until green hides real defects. COST-4's same-gate failure counter needs a flake classification that a human can see, not a silent rerun.
+
+**Resolution (later the same session).** It was a real bug, not load: a data race in WI-04's own test, where parallel subtests appended into one shared backing array. An independent reviewer running `-race -shuffle=on` with a recorded seed reproduced it. Two lessons follow:
+- **"Five clean reruns" isn't evidence of absence.** Only a recorded seed made the failure reproducible.
+- **An item can be "reviewed, three rounds, `make check` green" and still carry a latent race.** That race was staged for commit, and evidence from a single run would have hidden it.
+
+## 18. A delegated change reported as done that never landed
+
+**What happened.**
+- **The report:** in WI-23 fix round 2, the implementor reported that `DefaultLimits` was raised to 16 MiB per file and 512 MiB total, and it updated the godoc and the design doc to match.
+- **The reality:** the code edit itself never applied (a gofmt alignment mismatch made the replace miss). The code still said 1 MiB and 64 MiB.
+- **Why nothing caught it:** every test passed, because no test pinned the defaults.
+- **Who did catch it:** two independent round-3 reviewers. One ran a real-repo corpus and saw every PR on a repo with a 1.2 MB CRD fail. The other mutated the value and saw no test fail.
+- **The cost:** one full review round spent on a "fixed" item.
+
+**Product implication.**
+- **An agent's report is a claim, not evidence (P4).** The factory must check every claimed change against the diff and against a test that would fail without it. Docs and comments agreeing with the claim prove nothing; here they were the only places the change landed.
+- **Brief-driven requirements need a killing test (AGT-4, P4).** Any requirement stated as a value, such as a limit, cap, timeout or default, needs a test that pins that value. Otherwise "done" can't be told apart from "documented".
+- **Reviewers need their own oracle.** Corpus runs and mutation testing caught this; reading the report could not. The reviewer role should be able to run its own checks rather than reading the implementor's summary (AGT-3).
