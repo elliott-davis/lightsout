@@ -32,8 +32,8 @@ func hasACL(f *os.File, dir bool) (bool, error) {
 		}
 		var errno syscall.Errno
 		if err := rc.Control(func(fd uintptr) {
-			// A zero-size buffer asks for the attribute's size without reading it.
-			_, _, errno = syscall.Syscall6(syscall.SYS_FGETXATTR, fd, uintptr(unsafe.Pointer(p)), 0, 0, 0, 0) //nolint:gosec // p is a live NUL-terminated string
+			// A zero-size buffer asks for the attribute's size without reading it. p is a live NUL-terminated string.
+			_, _, errno = syscall.Syscall6(syscall.SYS_FGETXATTR, fd, uintptr(unsafe.Pointer(p)), 0, 0, 0, 0)
 		}); err != nil {
 			return false, fmt.Errorf("get descriptor: %w", err)
 		}
